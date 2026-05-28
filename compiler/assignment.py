@@ -77,29 +77,31 @@ def assign_nocross(
     target_positions:  list[tuple[float, float]],
 ) -> list[int]:
     """
-    Hungarian assignment refined by iterative pairwise swaps to eliminate
-    path crossings.  Prefers minimum total distance but will swap assignments
-    whenever doing so reduces the number of crossing flight paths.
+    Hungarian assignment refined by greedy first-crossing swaps.
+
+    Finds the first pair (i, j) whose paths cross and swaps their targets
+    immediately.  Repeats until no crossings remain or the iteration cap
+    (min(n², 300)) is hit.  O(n²) per iteration — fast even for n=100
+    because well-designed formations start with very few crossings.
     """
     assignment = assign(current_positions, target_positions)
-    n = len(assignment)
+    n   = len(assignment)
+    cap = min(n * n, 300)
 
-    for _ in range(n * n):
-        crossings = _count_crossings(current_positions, target_positions, assignment)
-        if crossings == 0:
-            break
-        improved = False
+    for _ in range(cap):
+        found = False
         for i in range(n):
             for j in range(i + 1, n):
-                trial = assignment[:]
-                trial[i], trial[j] = trial[j], trial[i]
-                if _count_crossings(current_positions, target_positions, trial) < crossings:
-                    assignment = trial
-                    improved = True
+                if _segments_cross(
+                    current_positions[i], target_positions[assignment[i]],
+                    current_positions[j], target_positions[assignment[j]],
+                ):
+                    assignment[i], assignment[j] = assignment[j], assignment[i]
+                    found = True
                     break
-            if improved:
+            if found:
                 break
-        if not improved:
+        if not found:
             break
 
     return assignment

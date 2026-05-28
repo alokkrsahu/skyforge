@@ -20,15 +20,8 @@ from core.show_format.schema import (
     ShowFile, ShowMetadata, Vec3, VenueOrigin,
 )
 from compiler.assignment import assign_nocross as assign
+from compiler.formations import get_formation
 from compiler.trajectory_generator import fit_trajectory
-
-# Formation offsets (dN, dE) from centre — matches drone_simulation/show/config.py
-FORMATIONS: dict[str, list[tuple[float, float]]] = {
-    "grid":    [(-1.0, -1.0), (-1.0,  1.0), ( 1.0, -1.0), ( 1.0,  1.0)],
-    "line":    [( 0.0, -3.0), ( 0.0, -1.0), ( 0.0,  1.0), ( 0.0,  3.0)],
-    "diamond": [(-2.0,  0.0), ( 0.0, -2.0), ( 2.0,  0.0), ( 0.0,  2.0)],
-    "arrow":   [( 0.0,  0.0), ( 2.0, -2.0), ( 2.0,  2.0), ( 4.0,  0.0)],
-}
 
 TAKEOFF_ALT_M = 5.0
 SHOW_ALT_M    = 5.0
@@ -36,7 +29,7 @@ SHOW_ALT_M    = 5.0
 
 @dataclass
 class _Act:
-    formation:    str
+    formation:    str | list[tuple[float, float]]   # name or explicit (dN, dE) list
     center_ne:    tuple[float, float]
     transition_s: float
     hold_s:       float
@@ -73,12 +66,18 @@ class ShowBuilder:
 
     def add_act(
         self,
-        formation:    str,
+        formation:    str | list[tuple[float, float]],
         center_ne:    tuple[float, float],
         transition_s: float,
         hold_s:       float,
     ) -> "ShowBuilder":
-        assert formation in FORMATIONS, f"Unknown formation '{formation}'"
+        """
+        Add a choreography act.
+
+        formation  built-in name ("circle", "grid", "star", "text:ALOK", …),
+                   a text spec  ("text:HELLO:scale=3.0"),
+                   or a list of (dN, dE) offset tuples for fully custom art.
+        """
         self._acts.append(_Act(formation, center_ne, transition_s, hold_s))
         return self
 
@@ -141,7 +140,7 @@ class ShowBuilder:
         current_ne = [(spec.home_ned.n, spec.home_ned.e) for spec in self._drones]
 
         for act in self._acts:
-            offsets = FORMATIONS[act.formation]
+            offsets = get_formation(act.formation, self._n)
             cN, cE  = act.center_ne
 
             # Formation target positions

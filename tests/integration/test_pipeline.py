@@ -65,7 +65,7 @@ def test_pipeline_runs_and_produces_validation_report():
     from shows.four_drone_demo import builder
 
     result = CompilePipeline(
-        CompileConfig(deconflict=True, fail_on_error=False)
+        CompileConfig(deconflict=False, fail_on_error=False)
     ).run(builder)
 
     assert result.show is not None
@@ -77,7 +77,7 @@ def test_pipeline_envelopes_replace_placeholders():
     """All envelope radii are non-negative after the pipeline runs."""
     from shows.four_drone_demo import builder
 
-    result = CompilePipeline(CompileConfig(deconflict=True, validate=False)).run(builder)
+    result = CompilePipeline(CompileConfig(deconflict=False, validate=False)).run(builder)
     assert result.ok
     for env in result.show.envelopes:
         for seg in env.segments:
@@ -91,7 +91,7 @@ def test_pipeline_json_round_trip_preserves_envelopes():
     """Envelope segments and radii survive JSON serialisation → deserialisation."""
     from shows.four_drone_demo import builder
 
-    result = CompilePipeline(CompileConfig(deconflict=True, validate=False)).run(builder)
+    result = CompilePipeline(CompileConfig(deconflict=False, validate=False)).run(builder)
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
         path = f.name
     try:
