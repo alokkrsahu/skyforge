@@ -140,10 +140,6 @@ class ShowBuilder:
         # After takeoff, drones hover at home XY positions
         current_ne = [(spec.home_ned.n, spec.home_ned.e) for spec in self._drones]
 
-        # Assignment is stable across acts — compute once using initial positions
-        # and preserve across acts (drone i always maps to its assigned slot)
-        slot_assignment: Optional[list[int]] = None
-
         for act in self._acts:
             offsets = FORMATIONS[act.formation]
             cN, cE  = act.center_ne
@@ -151,12 +147,8 @@ class ShowBuilder:
             # Formation target positions
             targets = [(cN + dN, cE + dE) for (dN, dE) in offsets]
 
-            if slot_assignment is None:
-                # First act: assign optimally
-                slot_assignment = assign(current_ne, targets)
-            # Subsequent acts: re-assign from current positions each time
-            else:
-                slot_assignment = assign(current_ne, targets)
+            # Assign optimally from current positions for this act.
+            slot_assignment = assign(current_ne, targets)
 
             # Each drone flies to its assigned target
             t_arrive = t_now + act.transition_s
