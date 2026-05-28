@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skyforge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Production-grade drone show platform"
 requires-python = ">=3.11"
 dependencies = [
@@ -12,6 +12,9 @@ dependencies = [
     "scipy>=1.11",
     "msgpack>=1.0",
 ]
+
+[project.scripts]
+skyforge = "cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio"]

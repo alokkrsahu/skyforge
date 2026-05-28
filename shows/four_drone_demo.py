@@ -12,7 +12,6 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.show_format.schema import Color, DroneSpec, Vec3, VenueOrigin
-from core.show_format.writer import to_json, to_msgpack
 from compiler.show_builder import ShowBuilder
 
 # ── Drone fleet ───────────────────────────────────────────────────────────────
@@ -68,8 +67,16 @@ builder.add_reactive_binding(
 
 # ── Compile & write ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    out_dir = os.path.dirname(os.path.abspath(__file__))
-    show    = builder.compile()
+    from compiler.pipeline import CompilePipeline
+    from core.show_format.writer import to_json, to_msgpack
+
+    out_dir  = os.path.dirname(os.path.abspath(__file__))
+    pipeline = CompilePipeline()
+    result   = pipeline.run(builder)
+    show     = result.show
+
+    if result.validation:
+        print(result.validation)
 
     json_path = os.path.join(out_dir, "four_drone_demo.skyforge.json")
     bin_path  = os.path.join(out_dir, "four_drone_demo.skyforge")
@@ -77,8 +84,9 @@ if __name__ == "__main__":
     to_json(show, json_path)
     to_msgpack(show, bin_path)
 
-    print(f"Compiled: {show.metadata.n_drones} drones, "
+    print(f"\nCompiled: {show.metadata.n_drones} drones, "
           f"{show.metadata.duration_s:.1f}s, "
           f"{sum(len(t.segments) for t in show.trajectories)} total segments")
-    print(f"  JSON  → {json_path}")
-    print(f"  Binary→ {bin_path}")
+    print(f"  Status → {show.metadata.validation_status}")
+    print(f"  JSON   → {json_path}")
+    print(f"  Binary → {bin_path}")
