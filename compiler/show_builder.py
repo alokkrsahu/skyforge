@@ -19,7 +19,7 @@ from core.show_format.schema import (
     LedKeyframe, LedTrack, NominalTrajectory, ReactiveBinding,
     ShowFile, ShowMetadata, Vec3, VenueOrigin,
 )
-from compiler.assignment import assign
+from compiler.assignment import assign_nocross as assign
 from compiler.trajectory_generator import fit_trajectory
 
 # Formation offsets (dN, dE) from centre — matches drone_simulation/show/config.py

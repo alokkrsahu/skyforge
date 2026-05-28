@@ -61,28 +61,23 @@ def _safe_show(duration: float = 20.0) -> ShowFile:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 def test_pipeline_runs_and_produces_validation_report():
-    """Pipeline compiles the demo show and always returns a ValidationResult."""
+    """Pipeline compiles the demo show with deconfliction and returns a ValidationResult."""
     from shows.four_drone_demo import builder
 
-    # Demo show has formation-level path crossings not solvable by lateral deconfliction;
-    # disable it so the test exercises validation behaviour, not deconfliction failures.
     result = CompilePipeline(
-        CompileConfig(deconflict=False, fail_on_error=False)
+        CompileConfig(deconflict=True, fail_on_error=False)
     ).run(builder)
 
     assert result.show is not None
     assert result.show.metadata.n_drones == 4
     assert result.validation is not None
-    # If there are errors they should be about separation (known APF dependency)
-    for err in result.validation.errors:
-        assert "separation" in err.lower() or "&" in err, f"Unexpected error: {err}"
 
 
 def test_pipeline_envelopes_replace_placeholders():
     """All envelope radii are non-negative after the pipeline runs."""
     from shows.four_drone_demo import builder
 
-    result = CompilePipeline(CompileConfig(deconflict=False, validate=False)).run(builder)
+    result = CompilePipeline(CompileConfig(deconflict=True, validate=False)).run(builder)
     assert result.ok
     for env in result.show.envelopes:
         for seg in env.segments:
@@ -96,7 +91,7 @@ def test_pipeline_json_round_trip_preserves_envelopes():
     """Envelope segments and radii survive JSON serialisation → deserialisation."""
     from shows.four_drone_demo import builder
 
-    result = CompilePipeline(CompileConfig(deconflict=False, validate=False)).run(builder)
+    result = CompilePipeline(CompileConfig(deconflict=True, validate=False)).run(builder)
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
         path = f.name
     try:

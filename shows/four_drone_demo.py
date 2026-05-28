@@ -71,12 +71,7 @@ if __name__ == "__main__":
     from core.show_format.writer import to_json, to_msgpack
 
     out_dir  = os.path.dirname(os.path.abspath(__file__))
-    # Deconfliction is disabled: the demo show has formation-level path crossings
-    # (drones swap slots between differently-shaped formations) that lateral nudging
-    # cannot resolve without disrupting intended endpoints.  The runtime APF layer
-    # handles the actual separation at flight time.  Phase 4 will add path planning
-    # to ShowBuilder to eliminate structural crossings at the waypoint level.
-    pipeline = CompilePipeline(CompileConfig(deconflict=False, fail_on_error=False))
+    pipeline = CompilePipeline(CompileConfig(deconflict=True, fail_on_error=False))
     result   = pipeline.run(builder)
     show     = result.show
 
