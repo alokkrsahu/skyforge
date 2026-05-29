@@ -19,12 +19,23 @@ from core.show_format.schema import (
     LedKeyframe, LedTrack, NominalTrajectory, ReactiveBinding,
     ShowFile, ShowMetadata, Vec3, VenueOrigin,
 )
-from compiler.assignment import assign_nocross as assign
+from compiler.assignment import assign_nocross as assign, band_assignment
 from compiler.formations import get_formation
 from compiler.trajectory_generator import fit_trajectory
 
 TAKEOFF_ALT_M = 5.0
 SHOW_ALT_M    = 5.0
+
+# Altitude-layered transitions: drones whose horizontal paths would collide are
+# placed in different vertical bands during the move, then reconverge to show
+# altitude at the hold. Bands are spaced >= the planned separation so different
+# bands can never collide. A conflict-free transition uses band 0 only (no climb),
+# so flat shows stay flat.
+MIN_SEP_M       = 1.5
+LAYER_SPACING_M = 1.6     # vertical gap between bands (> MIN_SEP_M)
+CLIMB_FRAC      = 0.2     # fraction of the transition spent climbing / descending
+LAYER_MARGIN_M  = 1.0     # band-assignment edges out to MIN_SEP_M + this, so the
+                          # climb/descend ramp zones and bowed paths stay separated
 
 
 @dataclass
@@ -50,6 +61,9 @@ class ShowBuilder:
         origin:  VenueOrigin = None,
         author:  str = "",
         venue:   str = "",
+        layer_transitions: bool = True,
+        min_sep_m:         float = MIN_SEP_M,
+        layer_spacing_m:   float = LAYER_SPACING_M,
     ):
         self._name   = name
         self._drones = drones
@@ -57,6 +71,11 @@ class ShowBuilder:
         self._origin = origin or VenueOrigin()
         self._author = author
         self._venue  = venue
+        # Altitude layering (see module docstring). On by default; only adds
+        # vertical motion where horizontal paths actually conflict.
+        self._layer_transitions = layer_transitions
+        self._min_sep_m         = min_sep_m
+        self._layer_spacing_m   = layer_spacing_m
 
         self._acts:              list[_Act]            = []
         self._led_cues:          list[_LedCue]         = []
@@ -140,20 +159,49 @@ class ShowBuilder:
         current_ne = [(spec.home_ned.n, spec.home_ned.e) for spec in self._drones]
 
         for act in self._acts:
-            offsets = get_formation(act.formation, self._n)
+            # Size the formation to the fleet: scale up so neighbours clear the
+            # planned separation (+ margin). Holds are stationary, so this is what
+            # keeps a 100-drone circle/star/spiral from packing sub-metre.
+            offsets = get_formation(
+                act.formation, self._n, min_spacing_m=self._min_sep_m + 1.0
+            )
             cN, cE  = act.center_ne
 
             # Formation target positions
             targets = [(cN + dN, cE + dE) for (dN, dE) in offsets]
 
             # Assign optimally from current positions for this act.
-            slot_assignment = assign(current_ne, targets)
+            slot_assignment = assign(current_ne, targets, self._min_sep_m)
 
-            # Each drone flies to its assigned target
+            # Altitude-layer the transition: drones whose horizontal paths pass
+            # within min_sep get different vertical bands so they cannot collide.
+            # A conflict-free transition returns all-zero bands → no vertical motion.
+            if self._layer_transitions and act.transition_s > 0:
+                bands = band_assignment(
+                    current_ne, targets, slot_assignment,
+                    self._min_sep_m + LAYER_MARGIN_M,
+                )
+            else:
+                bands = [0] * self._n
+
+            # Each drone flies to its assigned target (climbing into its band
+            # mid-transition, then descending back to show altitude on arrival).
             t_arrive = t_now + act.transition_s
+            cf       = CLIMB_FRAC
             for i in range(self._n):
                 j = slot_assignment[i]
-                tN, tE = targets[j]
+                tN, tE   = targets[j]
+                cN0, cE0 = current_ne[i]
+                if bands[i] > 0:
+                    band_d = -SHOW_ALT_M - bands[i] * self._layer_spacing_m
+                    drone_waypoints[i].append((
+                        t_now + cf * act.transition_s,
+                        Vec3(cN0 + cf * (tN - cN0), cE0 + cf * (tE - cE0), band_d),
+                    ))
+                    drone_waypoints[i].append((
+                        t_arrive - cf * act.transition_s,
+                        Vec3(cN0 + (1 - cf) * (tN - cN0), cE0 + (1 - cf) * (tE - cE0), band_d),
+                    ))
                 drone_waypoints[i].append(
                     (t_arrive, Vec3(tN, tE, -SHOW_ALT_M))
                 )

@@ -95,6 +95,45 @@ def _min_separation(
     return math.hypot(ax + s * bx, ay + s * by)
 
 
+def band_assignment(
+    current_positions: list[tuple[float, float]],
+    target_positions:  list[tuple[float, float]],
+    assignment:        list[int],
+    min_sep_m:         float = 1.5,
+) -> list[int]:
+    """
+    Assign each drone a vertical *band* (0-based) for an altitude-layered
+    transition, so any pair whose horizontal paths would pass within min_sep_m
+    end up in DIFFERENT bands — making a horizontal collision impossible once the
+    bands are vertically separated by >= min_sep_m.
+
+    Greedy graph colouring on the horizontal-conflict graph (edge iff the
+    time-parameterised closest approach < min_sep_m). Colouring in descending-
+    degree order keeps the band count (= max altitude depth) small. Band 0 means
+    "stay at show altitude" (no climb), so a conflict-free transition returns all
+    zeros and produces no vertical motion at all.
+    """
+    n = len(assignment)
+    adj: list[set[int]] = [set() for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _min_separation(
+                current_positions[i], target_positions[assignment[i]],
+                current_positions[j], target_positions[assignment[j]],
+            ) < min_sep_m:
+                adj[i].add(j)
+                adj[j].add(i)
+
+    band = [-1] * n
+    for i in sorted(range(n), key=lambda x: -len(adj[x])):
+        used = {band[k] for k in adj[i] if band[k] >= 0}
+        b = 0
+        while b in used:
+            b += 1
+        band[i] = b
+    return band
+
+
 def assign_nocross(
     current_positions: list[tuple[float, float]],
     target_positions:  list[tuple[float, float]],

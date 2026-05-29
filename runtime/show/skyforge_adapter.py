@@ -44,6 +44,21 @@ _ARM_VISUALS    = ["5010_motor_base_0", "5010_motor_base_1",
 # visual_config service call silently times out (no LED change).
 _GZ_ENV = {**os.environ, "GZ_IP": "127.0.0.1"}
 
+# Bound the number of concurrent `gz service` subprocesses. Each LED change is 4
+# spawns per drone; at 100 drones an unthrottled burst is ~400 processes, which
+# starves the event loop and drops the offboard setpoint stream. The semaphore
+# spreads the burst so the flight loop keeps its timing.
+_GZ_MAX_CONCURRENT = 16
+_GZ_SEM: "asyncio.Semaphore | None" = None
+
+
+def _gz_sem() -> "asyncio.Semaphore":
+    # Created lazily on the running loop so import never touches an event loop.
+    global _GZ_SEM
+    if _GZ_SEM is None:
+        _GZ_SEM = asyncio.Semaphore(_GZ_MAX_CONCURRENT)
+    return _GZ_SEM
+
 
 async def _led_update(drone_id: int, r: float, g: float, b: float) -> None:
     model = f"x500_{drone_id}"
@@ -54,19 +69,21 @@ async def _led_update(drone_id: int, r: float, g: float, b: float) -> None:
         f"emissive {{r:{r:.3f} g:{g:.3f} b:{b:.3f} a:1}}"
         f"}}"
     )
+    sem = _gz_sem()
 
     async def _send(vis: str) -> None:
         proto = f'name: "{model}::base_link::{vis}" {mat}'
-        proc  = await asyncio.create_subprocess_exec(
-            "gz", "service", "-s", _GZ_VISUAL_SVC,
-            "--reqtype", "gz.msgs.Visual",
-            "--reptype", "gz.msgs.Boolean",
-            "--timeout", "200",
-            "--req", proto,
-            env=_GZ_ENV,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )
-        await proc.wait()
+        async with sem:
+            proc  = await asyncio.create_subprocess_exec(
+                "gz", "service", "-s", _GZ_VISUAL_SVC,
+                "--reqtype", "gz.msgs.Visual",
+                "--reptype", "gz.msgs.Boolean",
+                "--timeout", "200",
+                "--req", proto,
+                env=_GZ_ENV,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
 
     await asyncio.gather(*(_send(v) for v in _ARM_VISUALS))
     # Spotlight intentionally off — arm lights provide all visual feedback

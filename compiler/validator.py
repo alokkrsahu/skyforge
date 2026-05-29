@@ -16,6 +16,7 @@ import numpy as np
 from core.geometry import distance_3d, norm
 from core.reactive.primitives import get as get_primitive
 from core.show_format.schema import ShowFile, SCHEMA_VERSION
+from compiler.sampling import sample_positions
 
 
 # ── Result & config value objects ─────────────────────────────────────────────
@@ -124,18 +125,16 @@ def _check_separation(
     times = np.arange(0.0, dur + dt * 0.5, dt)
     times = np.clip(times, 0.0, dur)
 
+    # Sample every trajectory once (vectorised), then do pairwise distances with
+    # NumPy — O(n²·T) array ops instead of O(n²·T·segments) Python calls.
+    pos = sample_positions(show.trajectories, times)   # (n, T, 3)
+
     for i in range(n):
         for j in range(i + 1, n):
-            min_dist = math.inf
-            min_t    = 0.0
-            for t in times:
-                d = distance_3d(
-                    show.trajectories[i].evaluate(float(t)),
-                    show.trajectories[j].evaluate(float(t)),
-                )
-                if d < min_dist:
-                    min_dist = d
-                    min_t    = float(t)
+            d = np.linalg.norm(pos[i] - pos[j], axis=1)   # (T,)
+            k = int(np.argmin(d))
+            min_dist = float(d[k])
+            min_t    = float(times[k])
             if min_dist < config.min_sep_m:
                 errors.append(
                     f"drones {i}&{j} minimum separation {min_dist:.3f}m < "

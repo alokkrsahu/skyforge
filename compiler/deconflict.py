@@ -27,6 +27,9 @@ import dataclasses
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
+from compiler.sampling import sample_positions
 from compiler.trajectory_generator import fit_trajectory
 from core.geometry import distance_3d
 from core.show_format.schema import NominalTrajectory, ShowFile, Vec3
@@ -151,13 +154,11 @@ def _deconflict_pass(
     dt       = 1.0 / cfg.sample_hz
     duration = show.metadata.duration_s
     n_samp   = int(duration / dt) + 1
-    sample_t = [k * dt for k in range(n_samp)]
+    sample_t    = [k * dt for k in range(n_samp)]
+    sample_t_np = np.asarray(sample_t)
 
-    # Sample all trajectories once
-    sampled: list[list[Vec3]] = [
-        [show.trajectories[i].evaluate(t) for t in sample_t]
-        for i in range(n)
-    ]
+    # Sample all trajectories once (vectorised) → (n, n_samp, 3)
+    sampled = sample_positions(show.trajectories, sample_t_np)
 
     # corrections[drone_id][t] = Vec3 additive lateral offset at knot time t
     corrections: dict[int, dict[float, Vec3]] = {i: {} for i in range(n)}
@@ -166,26 +167,21 @@ def _deconflict_pass(
 
     for i in range(n):
         for j in range(i + 1, n):
-            bad_times = [
-                sample_t[k]
-                for k in range(n_samp)
-                if distance_3d(sampled[i][k], sampled[j][k]) < cfg.min_sep_m
-            ]
-            if not bad_times:
+            d_ij     = np.linalg.norm(sampled[i] - sampled[j], axis=1)   # (n_samp,)
+            bad_mask = d_ij < cfg.min_sep_m
+            if not bad_mask.any():
                 continue
+            bad_times = sample_t_np[bad_mask].tolist()
 
             for t_w0, t_w1 in _cluster_times(bad_times, cfg.cluster_gap_s):
                 n_windows += 1
 
                 # Find tightest point → direction and magnitude for this window
-                min_dist   = math.inf
-                t_closest  = (t_w0 + t_w1) / 2.0
-                for k, t in enumerate(sample_t):
-                    if t_w0 <= t <= t_w1:
-                        d = distance_3d(sampled[i][k], sampled[j][k])
-                        if d < min_dist:
-                            min_dist  = d
-                            t_closest = t
+                win       = (sample_t_np >= t_w0) & (sample_t_np <= t_w1)
+                d_win     = np.where(win, d_ij, np.inf)
+                kmin      = int(np.argmin(d_win))
+                min_dist  = float(d_win[kmin])
+                t_closest = float(sample_t_np[kmin])
 
                 nx, ny = _push_direction(show.trajectories, i, j, t_closest, n)
                 push   = min(
@@ -301,24 +297,20 @@ def deconflict(
             rising = 0
         prev_found = n_found
 
-    # Iteration cap or divergence — verify residual state
+    # Iteration cap or divergence — verify residual state (vectorised)
     dt       = 1.0 / cfg.sample_hz
     duration = current.metadata.duration_s
     n        = len(current.trajectories)
+    times    = np.arange(0.0, duration + dt * 0.5, dt)
+    pos      = sample_positions(current.trajectories, times)   # (n, T, 3)
     resolved = True
-    t = 0.0
-    while t <= duration and resolved:
-        for i in range(n):
-            for j in range(i + 1, n):
-                if distance_3d(
-                    current.trajectories[i].evaluate(t),
-                    current.trajectories[j].evaluate(t),
-                ) < cfg.min_sep_m:
-                    resolved = False
-                    break
-            if not resolved:
+    for i in range(n):
+        for j in range(i + 1, n):
+            if bool((np.linalg.norm(pos[i] - pos[j], axis=1) < cfg.min_sep_m).any()):
+                resolved = False
                 break
-        t += dt
+        if not resolved:
+            break
 
     return DeconflictResult(
         show=current,

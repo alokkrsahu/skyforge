@@ -29,8 +29,40 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _fit_min_spacing(
+    pts: list[tuple[float, float]],
+    min_spacing_m: float,
+) -> list[tuple[float, float]]:
+    """
+    Uniformly scale a formation (about the origin) so its closest pair is at least
+    min_spacing_m apart. NEVER shrinks (factor >= 1), so a formation that already
+    fits — or a small fleet — is returned unchanged. This is what lets a fixed-radius
+    generator hold an arbitrary fleet size: e.g. a 100-drone circle is blown up from
+    r=5 m (0.3 m spacing) to ~28 m so neighbours clear the planned separation.
+
+    Coincident points (min spacing 0) cannot be separated by scaling and are left
+    as-is — validation will flag the degenerate formation.
+    """
+    n = len(pts)
+    if n < 2 or min_spacing_m <= 0.0:
+        return pts
+    P = np.asarray(pts, dtype=float)                      # (n, 2)
+    diff = P[:, None, :] - P[None, :, :]
+    dist = np.hypot(diff[:, :, 0], diff[:, :, 1])
+    np.fill_diagonal(dist, np.inf)
+    dmin = float(dist.min())
+    if dmin <= 1e-9:
+        return pts
+    factor = max(1.0, min_spacing_m / dmin)
+    if factor == 1.0:
+        return pts
+    return [(p[0] * factor, p[1] * factor) for p in pts]
+
 
 def _centre(pts: list[tuple[float, float]]) -> list[tuple[float, float]]:
     if not pts:
@@ -127,14 +159,27 @@ def spiral(
     turns: float = 2.0,
     r_max: float = 8.0,
 ) -> list[tuple[float, float]]:
-    """Archimedean spiral from centre outward."""
-    if n == 1:
+    """
+    Archimedean spiral from centre outward, with drones spaced evenly by ARC
+    LENGTH rather than by linear radius. The naive r = r_max·k/(n-1) form bunches
+    drones tightly near the centre (sub-centimetre gaps at 100 drones); arc-length
+    resampling gives uniform gaps along the curve, so a later min-spacing scale-up
+    only has to enlarge by a small, sane factor instead of ~20×.
+    """
+    if n <= 1:
         return [(0.0, 0.0)]
-    return [
-        (r_max * (k / (n - 1)) * math.cos(math.pi / 2 + 2 * math.pi * turns * k / (n - 1)),
-         r_max * (k / (n - 1)) * math.sin(math.pi / 2 + 2 * math.pi * turns * k / (n - 1)))
-        for k in range(n)
-    ]
+    # Densely trace the spiral, then resample n points at equal cumulative arc length.
+    m     = max(2000, n * 20)
+    theta = np.linspace(0.0, 2 * np.pi * turns, m)
+    r     = r_max * (theta / (2 * np.pi * turns))
+    ang   = np.pi / 2 + theta
+    x = r * np.cos(ang)
+    y = r * np.sin(ang)
+    s = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(x), np.diff(y)))])
+    targets = np.linspace(0.0, s[-1], n)
+    xi = np.interp(targets, s, x)
+    yi = np.interp(targets, s, y)
+    return list(zip(xi.tolist(), yi.tolist()))
 
 
 # ── Sky art: 5×7 bitmap pixel font ───────────────────────────────────────────
@@ -266,6 +311,7 @@ _DISPATCH = {
 def get_formation(
     spec: str | list[tuple[float, float]],
     n:    int,
+    min_spacing_m: float = 0.0,
 ) -> list[tuple[float, float]]:
     """
     Return exactly n (dN, dE) offsets for the given formation spec.
@@ -281,7 +327,21 @@ def get_formation(
       "text:HELLO"          sky-art text, 2 m pixel spacing
       "text:HELLO:scale=3"  sky-art text, 3 m pixel spacing
       [list of (dN,dE)]     custom positions (padded/subsampled to n)
+
+    min_spacing_m > 0 uniformly scales the formation up (never down) so the
+    closest pair clears that distance — letting fixed-size generators hold large
+    fleets safely. 0 disables it (raw generator output).
     """
+    pts = _get_formation_raw(spec, n)
+    if min_spacing_m > 0.0:
+        pts = _fit_min_spacing(pts, min_spacing_m)
+    return pts
+
+
+def _get_formation_raw(
+    spec: str | list[tuple[float, float]],
+    n:    int,
+) -> list[tuple[float, float]]:
     if isinstance(spec, list):
         return _pad_to(spec, n)
 

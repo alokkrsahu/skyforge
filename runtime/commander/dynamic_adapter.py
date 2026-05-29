@@ -23,6 +23,19 @@ _GZ_LIGHT_SVC = "/world/default/light_config"
 # service call silently goes nowhere (no LED change).
 _GZ_ENV = {**os.environ, "GZ_IP": "127.0.0.1"}
 
+# Bound concurrent `gz service` subprocesses (4 per drone per colour change →
+# ~400 at 100 drones). Unthrottled, that burst starves the event loop and drops
+# the offboard setpoint stream; the semaphore spreads it.
+_GZ_MAX_CONCURRENT = 16
+_GZ_SEM: "asyncio.Semaphore | None" = None
+
+
+def _gz_sem() -> "asyncio.Semaphore":
+    global _GZ_SEM
+    if _GZ_SEM is None:
+        _GZ_SEM = asyncio.Semaphore(_GZ_MAX_CONCURRENT)
+    return _GZ_SEM
+
 # The drones' visible "LEDs" are the four named arm-tip point lights. We recolor
 # them via the light_config service (the render engine applies this at runtime —
 # verified via a server-side camera). Each must be re-sent with its exact
@@ -61,6 +74,7 @@ async def _led_update(drone_id: int, r: float, g: float, b: float) -> None:
     macOS GUI 3D view, which does not apply runtime light/material deltas.
     """
     model = f"x500_{drone_id}"
+    sem   = _gz_sem()
 
     async def _send(light: str, pos: tuple[float, float, float]) -> None:
         x, y, z = pos
@@ -72,16 +86,17 @@ async def _led_update(drone_id: int, r: float, g: float, b: float) -> None:
             f'range: 5.0 attenuation_constant: 0.3 attenuation_linear: 0.2 '
             f'attenuation_quadratic: 0.01 cast_shadows: false intensity: 1.0'
         )
-        proc = await asyncio.create_subprocess_exec(
-            "gz", "service", "-s", _GZ_LIGHT_SVC,
-            "--reqtype", "gz.msgs.Light",
-            "--reptype", "gz.msgs.Boolean",
-            "--timeout", "300",
-            "--req", req,
-            env=_GZ_ENV,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )
-        await proc.wait()
+        async with sem:
+            proc = await asyncio.create_subprocess_exec(
+                "gz", "service", "-s", _GZ_LIGHT_SVC,
+                "--reqtype", "gz.msgs.Light",
+                "--reptype", "gz.msgs.Boolean",
+                "--timeout", "300",
+                "--req", req,
+                env=_GZ_ENV,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
 
     await asyncio.gather(*(_send(l, p) for l, p in _ARM_LIGHTS.items()))
 

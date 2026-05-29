@@ -21,6 +21,7 @@ import numpy as np
 
 from core.geometry import distance_3d
 from core.show_format.schema import DroneEnvelope, EnvelopeSegment, ShowFile
+from compiler.sampling import sample_positions
 
 
 @dataclass
@@ -50,27 +51,23 @@ def compute_envelopes(
     times = np.arange(0.0, duration + dt * 0.5, dt)
     times = np.clip(times, 0.0, duration)
 
-    # Sample every trajectory at every time point  (shape: n × T)
-    positions = [
-        [show.trajectories[i].evaluate(float(t)) for t in times]
-        for i in range(n)
-    ]
+    # Sample every trajectory once (vectorised): shape (n, T, 3)
+    positions = sample_positions(show.trajectories, times)
 
     envelopes: list[DroneEnvelope] = []
     for i in range(n):
-        radii: list[float] = []
-        for k in range(len(times)):
-            min_r = math.inf
-            for j in range(n):
-                if j == i:
-                    continue
-                d = distance_3d(positions[i][k], positions[j][k])
-                r = max(0.0, (d - config.min_sep_m) / 2.0)
-                if r < min_r:
-                    min_r = r
-            radii.append(min(config.max_radius_m, min_r) if min_r != math.inf else config.max_radius_m)
-
-        segments = _merge_to_segments(times, radii, duration, config.merge_tol_m)
+        # 3-D distance from drone i to every other drone at every time → (n, T)
+        dists = np.linalg.norm(positions - positions[i][None, :, :], axis=2)
+        dists[i] = np.inf                                    # ignore self
+        # radius_i(t) = min_j max(0, (dist - min_sep)/2), capped; no neighbours → max
+        r = np.maximum(0.0, (dists - config.min_sep_m) / 2.0)
+        min_r = r.min(axis=0)                                # (T,) min over j
+        min_r = np.where(
+            np.isfinite(min_r),
+            np.minimum(config.max_radius_m, min_r),
+            config.max_radius_m,
+        )
+        segments = _merge_to_segments(times, min_r.tolist(), duration, config.merge_tol_m)
         envelopes.append(DroneEnvelope(drone_id=i, segments=segments))
 
     return envelopes
