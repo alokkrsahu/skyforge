@@ -88,14 +88,15 @@ def compute_apf_offset(
 
     if emergency:
         # Combine emergency pushes from all too-close neighbours, clamp to max.
-        mag = math.hypot(emerg_n, emerg_e)
+        # Apply the horizontal AND the vertical escape together, so a drone hemmed
+        # in by an offset neighbour and an NE-collocated one resolves both at once.
+        out_d = math.copysign(APF_MAX_VERT, emerg_d_sign) if emerg_d_sign != 0.0 else 0.0
+        mag   = math.hypot(emerg_n, emerg_e)
         if mag > 1e-6:
             s = APF_MAX_OFFSET / mag
-            return (emerg_n * s, emerg_e * s, 0.0)
+            return (emerg_n * s, emerg_e * s, out_d)
         # Purely collocated in NE — escape vertically at max strength.
-        if emerg_d_sign != 0.0:
-            return (0.0, 0.0, math.copysign(APF_MAX_VERT, emerg_d_sign))
-        return (0.0, 0.0, 0.0)
+        return (0.0, 0.0, out_d)
 
     # Non-emergency — clamp gradual NE and vertical offsets independently.
     ne_total = math.hypot(ne_dN, ne_dE)

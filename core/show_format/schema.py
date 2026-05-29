@@ -218,6 +218,7 @@ class ShowMetadata:
     compile_validate_hz:   float = 0.0   # validation sampling rate (Hz)
     deconflicted:          bool  = False # did trajectory deconfliction run?
     deconflict_resolved:   bool  = True  # False = residual separation conflicts remain
+    envelopes_computed:    bool  = False # True once compute_envelopes() ran (vs all-zero placeholders)
 
 
 @dataclass

@@ -14,12 +14,10 @@ observed within its window).
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from core.geometry import distance_3d
 from core.show_format.schema import DroneEnvelope, EnvelopeSegment, ShowFile
 from compiler.sampling import sample_positions
 

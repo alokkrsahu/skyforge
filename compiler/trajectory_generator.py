@@ -26,8 +26,8 @@ def _hold_aware_tangents(t: np.ndarray, pts: np.ndarray, hold_tol: float = 1e-6)
     d = np.zeros_like(pts)
     for k in range(m):
         is_hold = (
-            (k > 0     and np.allclose(pts[k], pts[k - 1], atol=hold_tol)) or
-            (k < m - 1 and np.allclose(pts[k], pts[k + 1], atol=hold_tol))
+            (k > 0     and np.allclose(pts[k], pts[k - 1], rtol=0.0, atol=hold_tol)) or
+            (k < m - 1 and np.allclose(pts[k], pts[k + 1], rtol=0.0, atol=hold_tol))
         )
         if k == 0 or k == m - 1 or is_hold:
             d[k] = 0.0                                   # at rest

@@ -40,6 +40,7 @@ def _metadata(d: dict) -> ShowMetadata:
         compile_validate_hz   = d.get("compile_validate_hz", 0.0),
         deconflicted          = d.get("deconflicted", False),
         deconflict_resolved   = d.get("deconflict_resolved", True),
+        envelopes_computed    = d.get("envelopes_computed", False),
     )
 
 def _drone_spec(d: dict) -> DroneSpec:

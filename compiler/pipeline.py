@@ -161,6 +161,7 @@ class CompilePipeline:
             compile_validate_hz   = val_cfg.sample_hz,
             deconflicted          = deconflicted,
             deconflict_resolved   = deconflict_resolved,
+            envelopes_computed    = cfg.compute_envelopes,
         )
         show = dataclasses.replace(show, metadata=meta)
 

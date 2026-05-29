@@ -127,7 +127,10 @@ class SkyforgeRuntime:
         # reactive offset to zero — NOT be treated as unbounded. Only genuinely
         # uncomputed (all-zero) envelopes fall back to unclamped, so a not-yet-
         # enveloped show can still preview reactive motion.
-        self.envelopes_computed = any(
+        # "Computed" iff the pipeline stamped the flag (reliable even for a
+        # legitimately all-zero computed envelope); fall back to the radius
+        # heuristic for shows compiled before the flag existed.
+        self.envelopes_computed = bool(getattr(show.metadata, "envelopes_computed", False)) or any(
             seg.radius_m > 0.0
             for env in show.envelopes
             for seg in env.segments
@@ -229,9 +232,16 @@ async def run_drone_skyforge(
     ready_count: list,             # [int] — incremented as each drone becomes ready
 ):
     tag        = f"[drone {drone_id}]"
-    if not (0 <= drone_id < runtime.n_drones):
+    # Guard against the smallest of the per-drone arrays we index below, not just
+    # n_drones (= len(drones)) — a length-mismatched show would otherwise IndexError
+    # past the n_drones check.
+    _n_avail = min(len(runtime.show.drones), len(runtime.show.trajectories),
+                   len(runtime.show.led_tracks), len(runtime.show.envelopes))
+    if not (0 <= drone_id < _n_avail):
         raise ValueError(
-            f"drone_id {drone_id} out of range [0, {runtime.n_drones}) — malformed show?"
+            f"drone_id {drone_id} out of range [0, {_n_avail}) — malformed/inconsistent show "
+            f"(drones={len(runtime.show.drones)} traj={len(runtime.show.trajectories)} "
+            f"led={len(runtime.show.led_tracks)} env={len(runtime.show.envelopes)})"
         )
     home       = runtime.show.drones[drone_id].home_ned
     traj       = runtime.show.trajectories[drone_id]

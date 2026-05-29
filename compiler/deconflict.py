@@ -31,7 +31,6 @@ import numpy as np
 
 from compiler.sampling import sample_positions
 from compiler.trajectory_generator import fit_trajectory
-from core.geometry import distance_3d
 from core.show_format.schema import NominalTrajectory, ShowFile, Vec3
 
 
@@ -275,6 +274,8 @@ def deconflict(
         total_wnd += n_found
         iters_run  = iteration + 1
         if n_found == 0:
+            # iters_run here = number of CORRECTIVE passes (passes 0..iteration-1
+            # made corrections; this pass found none). 0 for an already-clean show.
             return DeconflictResult(
                 show=current,
                 iters_run=iteration,
