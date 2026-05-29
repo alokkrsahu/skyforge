@@ -58,9 +58,16 @@ class FleetCommander:
         rt.airborne   = False
         rt.ready_count = 0
         rt.transition  = None
+        # Rise IN PLACE: keep each drone's current parked XY and only set the
+        # cruise altitude. Resetting XY to home here made a takeoff AFTER a
+        # formation (e.g. circle → land) converge the whole fleet from their
+        # spread landed positions onto the tight 2 m home grid at once → pile-up →
+        # "Attitude failure (roll)" tumble. PX4's takeoff is vertical, so the drone
+        # is already above its landed XY; hold there and let a later `formation`
+        # command do the planned (scaled + crossing-free) rearrangement.
         for i in range(rt.n_drones):
-            hn, he = rt.home_ned[i]
-            rt.hold_pos[i] = (hn, he, -altitude_m)
+            px, py, _ = rt.hold_pos.get(i, (rt.home_ned[i][0], rt.home_ned[i][1], -altitude_m))
+            rt.hold_pos[i] = (px, py, -altitude_m)
         rt.flight_cycle += 1   # wakes drone coroutines waiting for next cycle
         return f"Taking off to {altitude_m:.1f} m — waiting for all drones..."
 
