@@ -80,7 +80,12 @@ Two modes (see `runtime/CLAUDE.md` for ops):
 - **Skyforge player** (`run_skyforge.py` + `show/skyforge_adapter.py`) — loads a `ShowFile`, syncs
   drones on `show_start_event`, evaluates polynomials + reactive offsets + APF at 10 Hz.
 - **Interactive commander** (`run_commander.py` + `commander/`) — live REPL; per-drone coroutines
-  track interpolated formation targets; multi-flight cycle.
+  track interpolated formation targets; multi-flight cycle. A `formation` change reuses the
+  compiler's collision-free planning *live*: scale the formation to the fleet + `assign_nocross`
+  (targeting ~2.5 m clearance for tracking-error margin) so dense pattern changes don't fly drones
+  through each other; APF is the reactive backstop. It stays single-altitude (no offline-style
+  altitude layering — a fast live transition can't make the vertical reconverge PX4-feasible).
+  `takeoff` rises drones **in place** (keeps current XY) rather than converging the fleet to home.
 
 MAVSDK/PX4 wiring: one `mavsdk_server` per drone (gRPC `GRPC_BASE+i`, MAVLink UDP `MAVLINK_BASE+i`)
 plus a **GCS beacon** on `GCS_BEACON_MAVLINK` (PX4 hard-codes `remote=14550` and denies arm

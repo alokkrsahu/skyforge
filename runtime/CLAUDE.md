@@ -39,7 +39,13 @@ pkill -f "run_commander"; pkill -9 -f "mavsdk_server"; sleep 2
 - `DynamicRuntime` (dynamic_adapter.py) holds live fleet state: formation targets, transitions, LED color, beat detector
 - `run_drone_commander()` is the per-drone asyncio coroutine — loops forever supporting multiple flight cycles via `flight_cycle` counter
 - `cli_loop()` (cli.py) reads stdin via `loop.run_in_executor` so it doesn't block
-- Formation positions come from `get_formation(spec, n)` in `../compiler/formations.py`
+- `formation` is collision-aware: it scales the formation to the fleet
+  (`get_formation(spec, n, min_spacing_m=3.0)`) and `assign_nocross`es drones from their
+  current positions to slots so a live pattern change (e.g. `circle` → `star`) doesn't fly
+  drones through each other. The assignment targets ~2.5 m clearance (margin above the
+  1.5 m floor for PX4 tracking error); APF is the reactive backstop. Single-altitude,
+  horizontal-only — altitude layering stays offline-only (`t5` player), where transitions
+  are long enough for the vertical reconverge to be PX4-feasible.
 
 **Skyforge show** (`run_skyforge.py` + `show/skyforge_adapter.py`):
 - Loads `.skyforge.json` (piecewise polynomial trajectories) via `../core/show_format`
@@ -101,7 +107,7 @@ Targets 4 motor-base visuals per drone (`5010_motor_base_0..3`). Emissive materi
 
 ### Multi-flight Cycle
 
-After `land`, drone coroutines loop back and wait for `runtime.flight_cycle > last_cycle`. Typing `takeoff` again increments `flight_cycle` and resets `ready_count`, `transition`, and `hold_pos`. This means the session stays alive indefinitely.
+After `land`, drone coroutines loop back and wait for `runtime.flight_cycle > last_cycle`. Typing `takeoff` again increments `flight_cycle` and resets `ready_count`/`transition`. Crucially it **rises each drone IN PLACE** — `hold_pos` keeps the current (landed) XY and only the altitude is set. (It used to reset `hold_pos` to the home grid, so a takeoff after a formation+land converged the whole spread fleet onto the tight 2 m home grid at once → pile-up → PX4 "Attitude failure (roll)" tumble.) Rearrange after takeoff with a `formation` command, which does the planned crossing-free transition. The session stays alive indefinitely.
 
 ### Gazebo Physics
 
