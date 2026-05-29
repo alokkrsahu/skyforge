@@ -89,6 +89,34 @@ def test_emergency_hold_ignores_velocity_direction():
     assert total >= APF_MAX_OFFSET * 0.99
 
 
+def test_emergency_aggregates_all_neighbours():
+    """Emergency repulsion combines EVERY too-close neighbour, not just the first
+    one — a drone pinned to its south and west escapes north-east."""
+    sep = APF_MIN_SEP_M * 0.6
+    dN, dE, dD = _call(
+        own_ned=(0.0, 0.0, -5.0),
+        own_vel=(0.0, 0.0, 0.0),
+        others_ned=[(-sep, 0.0, -5.0), (0.0, -sep, -5.0)],   # south + west
+    )
+    assert dN > 0.0 and dE > 0.0                              # pushed away from both
+    assert math.hypot(dN, dE) >= APF_MAX_OFFSET * 0.99        # clamped to max
+
+
+def test_emergency_applies_horizontal_and_vertical_escape_together():
+    """When a drone is hemmed in by an offset neighbour AND an NE-collocated one,
+    BOTH escapes fire (the vertical one used to be dropped)."""
+    dN, dE, dD = _call(
+        own_ned=(0.0, 0.0, -5.0),
+        own_vel=(0.0, 0.0, 0.0),
+        others_ned=[
+            (APF_MIN_SEP_M * 0.6, 0.0, -5.0),   # offset to the north → horizontal escape
+            (0.0, 0.0, -5.0 - APF_MIN_SEP_M * 0.6),   # directly above (NE-collocated) → vertical escape
+        ],
+    )
+    assert math.hypot(dN, dE) > 0.0                 # horizontal escape present
+    assert abs(dD) >= APF_MAX_VERT * 0.99           # vertical escape NOT dropped
+
+
 # ── Vertical repulsion ────────────────────────────────────────────────────────
 
 def test_vertical_repulsion_fires():
