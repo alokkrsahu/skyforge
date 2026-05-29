@@ -20,11 +20,26 @@ echo " PX4 SITL x${N} + Gazebo Server"
 echo " Logs: /tmp/px4_sitl_0.log .. _$((N-1)).log"
 echo "========================================="
 
-echo "[t1] Cleaning up stale processes..."
-pkill -9 -f "bin/px4"  2>/dev/null
-pkill -9 -f "gz sim"   2>/dev/null
+echo "[t1] Full clean restart — clearing the previous flight stack..."
+# Kill any OTHER t1_sitl.sh watchdog (NOT this invocation — excluding $$ avoids
+# self-kill). Multiple watchdogs fight over instances and flap the GCS link.
+for _pid in $(pgrep -f "t1_sitl.sh" 2>/dev/null); do
+    [ "$_pid" = "$$" ] && continue
+    kill -9 "$_pid" 2>/dev/null || true
+done
+# Kill the whole previous flight stack: PX4 + Gazebo + every mavsdk_server and
+# Python runtime session. Orphaned mavsdk_servers / commanders rebind the same
+# gRPC+UDP ports and cause "Connection reset by peer" / "Socket closed" at arm on
+# the next run; a stale PX4 keeps the drained per-flight battery (→ arm failsafe).
+# Restarting t1 gives a fresh sim (fresh battery) every time — the supported way to
+# fly again. NOTE: this also stops any running t5/t6 session; relaunch it after.
+pkill -9 -f "bin/px4"        2>/dev/null
+pkill -9 -f "gz sim"         2>/dev/null
+pkill -9 -f "mavsdk_server"  2>/dev/null
+pkill -9 -f "run_commander"  2>/dev/null
+pkill -9 -f "run_skyforge"   2>/dev/null
 rm -f /tmp/px4_lock-*  /tmp/px4-sock-*  /tmp/px4_sitl_*.log
-sleep 1
+sleep 2   # let the OS release the UDP/gRPC ports before respawning
 
 if [ ! -f "$PX4_BIN" ]; then
     echo "ERROR: PX4 binary not found. Run: make px4_sitl_default"
