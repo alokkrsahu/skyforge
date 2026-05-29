@@ -17,6 +17,15 @@ from compiler.assignment import assign_nocross
 from .dynamic_adapter import DynamicRuntime
 from show.config import MIN_SEP_M
 
+# Plan transitions with margin ABOVE the 1.5 m hard floor: the geometric closest
+# approach during a move otherwise sits right at MIN_SEP_M, so a ~0.3 m PX4 tracking
+# error breaches it (→ the occasional single-drone contact). Scaling formations to
+# 3.0 m AND making the assignment keep crossing paths >= 2.5 m yields a worst-case
+# ~2.1 m over ALL formation-pair transitions at 16 drones — ~0.6 m of execution
+# headroom (verified by brute force). The validator's 1.5 m floor stays the limit.
+_PLAN_SCALE_M = MIN_SEP_M + 1.5   # 3.0 m — formation (hold) spacing
+_PLAN_CROSS_M = MIN_SEP_M + 1.0   # 2.5 m — min transition clearance the assignment targets
+
 
 _COLOR_NAMES: dict[str, tuple[float, float, float]] = {
     "red":    (1.0, 0.0, 0.0),
@@ -100,7 +109,7 @@ class FleetCommander:
         try:
             # Scale the formation so neighbours clear the planned separation. Without
             # this the raw fixed-radius formations pack sub-metre at scale.
-            offsets = get_formation(spec, rt.n_drones, min_spacing_m=MIN_SEP_M + 1.0)
+            offsets = get_formation(spec, rt.n_drones, min_spacing_m=_PLAN_SCALE_M)
         except ValueError as e:
             return f"Error: {e}"
 
@@ -115,7 +124,7 @@ class FleetCommander:
         for i in range(rt.n_drones):
             p = rt.current_positions.get(i) or rt.hold_pos.get(i, (cx, cy, -rt.alt_m))
             current.append((p[0], p[1]))
-        assignment = assign_nocross(current, targets, MIN_SEP_M)
+        assignment = assign_nocross(current, targets, _PLAN_CROSS_M)
         end_pos = {
             i: (targets[assignment[i]][0], targets[assignment[i]][1], -rt.alt_m)
             for i in range(rt.n_drones)
