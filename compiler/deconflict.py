@@ -43,7 +43,7 @@ class DeconflictConfig:
     max_deflection_m:     float = 3.0   # cap on total lateral correction per knot
     window_pad_s:         float = 1.0   # pad knots added before/after conflict window
     cluster_gap_s:        float = 1.0   # merge conflict windows closer than this (s)
-    max_iters:            int   = 10    # iteration limit
+    max_iters:            int   = 20    # iteration limit (CompilePipeline scales this up for large fleets)
 
 
 @dataclass
@@ -267,13 +267,17 @@ def deconflict(
     Returns a DeconflictResult whose .show field is safe to pass to the next
     pipeline stage (envelope computation).
     """
-    cfg       = config or DeconflictConfig()
-    current   = show
-    total_wnd = 0
+    cfg        = config or DeconflictConfig()
+    current    = show
+    total_wnd  = 0
+    prev_found = None
+    rising     = 0
+    iters_run  = 0
 
     for iteration in range(cfg.max_iters):
         current, n_found = _deconflict_pass(current, cfg)
         total_wnd += n_found
+        iters_run  = iteration + 1
         if n_found == 0:
             return DeconflictResult(
                 show=current,
@@ -281,8 +285,23 @@ def deconflict(
                 conflicts_found=total_wnd,
                 resolved=True,
             )
+        # Divergence guard: in dense, single-altitude fields the plateau-push can
+        # oscillate and make things *worse* (conflict windows rise pass-over-pass).
+        # Bail after 2 consecutive increases instead of burning the whole budget —
+        # the residual check below then reports resolved=False quickly.
+        if prev_found is not None and n_found > prev_found:
+            rising += 1
+            if rising >= 2:
+                print(
+                    f"[deconflict] diverging (windows {prev_found}->{n_found}); "
+                    f"stopping after {iters_run} iters — not resolvable by lateral correction."
+                )
+                break
+        else:
+            rising = 0
+        prev_found = n_found
 
-    # Iteration cap hit — verify residual state
+    # Iteration cap or divergence — verify residual state
     dt       = 1.0 / cfg.sample_hz
     duration = current.metadata.duration_s
     n        = len(current.trajectories)
@@ -303,7 +322,7 @@ def deconflict(
 
     return DeconflictResult(
         show=current,
-        iters_run=cfg.max_iters,
+        iters_run=iters_run,
         conflicts_found=total_wnd,
         resolved=resolved,
     )

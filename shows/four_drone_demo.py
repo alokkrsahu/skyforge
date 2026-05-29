@@ -71,12 +71,18 @@ if __name__ == "__main__":
     from core.show_format.writer import to_json, to_msgpack
 
     out_dir  = os.path.dirname(os.path.abspath(__file__))
-    pipeline = CompilePipeline(CompileConfig(deconflict=False, fail_on_error=False))
+    # Deconfliction ON (default) — it is the only thing that guarantees inter-drone
+    # separation; assignment only minimises crossings, not clearance.
+    pipeline = CompilePipeline(CompileConfig(fail_on_error=False))
     result   = pipeline.run(builder)
     show     = result.show
 
     if result.validation:
         print(result.validation)
+    if not result.ok:
+        print("\n[four_drone] Validation FAILED — refusing to write an unsafe show. "
+              "Resolve the separation violations above before flying.")
+        sys.exit(1)
 
     json_path = os.path.join(out_dir, "four_drone_demo.skyforge.json")
     bin_path  = os.path.join(out_dir, "four_drone_demo.skyforge")

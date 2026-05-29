@@ -131,7 +131,10 @@ if __name__ == "__main__":
     print(f"  Extra drones orbiting text = {max(0, N - pixel_count('ALOK'))}")
     print(f"{'='*55}\n")
 
-    pipeline = CompilePipeline(CompileConfig(deconflict=False, fail_on_error=False))
+    # Deconfliction ON — collision safety for the 100-drone show must not rest on
+    # online APF alone. If it cannot fully resolve, we refuse to write the show
+    # rather than silently shipping one that fails separation (see guard below).
+    pipeline = CompilePipeline(CompileConfig(fail_on_error=False))
     result   = pipeline.run(builder)
     show     = result.show
 
@@ -141,6 +144,12 @@ if __name__ == "__main__":
     out_dir   = os.path.dirname(os.path.abspath(__file__))
     json_path = os.path.join(out_dir, "hundred_drone_demo.skyforge.json")
     bin_path  = os.path.join(out_dir, "hundred_drone_demo.skyforge")
+
+    if not result.ok:
+        print("\n[hundred_drone] Validation FAILED — refusing to write an unsafe show.")
+        print("  Deconfliction did not fully resolve at this fleet size/choreography.")
+        print("  (Single-altitude 100-drone deconfliction is a known hard case — see roadmap.)")
+        sys.exit(1)
 
     to_json(show, json_path)
     to_msgpack(show, bin_path)

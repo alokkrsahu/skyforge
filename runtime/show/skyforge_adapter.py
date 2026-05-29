@@ -97,14 +97,31 @@ class SkyforgeRuntime:
     def __init__(self, show: ShowFile):
         self.show     = show
         self.n_drones = len(show.drones)
-        # Written by drone coroutines each tick; read by APF computation
+        # Sync target — number of drones actually flying. Defaults to the full
+        # fleet; run_skyforge lowers it to the count that connected so a partial
+        # fleet can still start (the show clock waits for ready_target, not n).
+        self.ready_target = self.n_drones
+        # Written by telemetry_consumer() each tick; read by the control loop + APF.
         self.current_positions:  dict[int, tuple[float, float, float]] = {}
         self.current_velocities: dict[int, tuple[float, float, float]] = {}
+        # Envelopes are "computed" once the pipeline's compute_envelopes stage has
+        # run; the ShowBuilder placeholder is all-zero radii. When computed, a
+        # radius of 0.0 is a REAL constraint (no reactive room) and must clamp the
+        # reactive offset to zero — NOT be treated as unbounded. Only genuinely
+        # uncomputed (all-zero) envelopes fall back to unclamped, so a not-yet-
+        # enveloped show can still preview reactive motion.
+        self.envelopes_computed = any(
+            seg.radius_m > 0.0
+            for env in show.envelopes
+            for seg in env.segments
+        )
         self.beat = BeatDetector()
         self.beat.start()
 
     def reactive_offset(self, drone_id: int, show_time: float) -> tuple[float, float, float]:
         """Sum reactive offsets from all active bindings for this drone at show_time."""
+        if not (0 <= drone_id < self.n_drones):
+            return 0.0, 0.0, 0.0
         dN = dE = dD = 0.0
         for binding in self.show.reactive_bindings:
             if not (binding.t_start <= show_time <= binding.t_end):
@@ -114,11 +131,16 @@ class SkyforgeRuntime:
             env = self.show.envelopes[drone_id]
             radius = next(
                 (s.radius_m for s in env.segments if s.t_start <= show_time <= s.t_end),
-                0.0,
+                None,
             )
-            # radius_m=0.0 means safety envelope not yet computed (Phase 2).
-            # Use float('inf') so Phase 1 shows reactive effects unclamped.
-            if radius == 0.0:
+            if radius is None:
+                # No envelope segment covers this time → no defined safety budget.
+                # Contribute nothing rather than assume unbounded freedom.
+                continue
+            if not self.envelopes_computed:
+                # Placeholder (uncomputed) envelopes: preview reactive motion
+                # unclamped. Computed envelopes use the radius as-is — a radius of
+                # 0.0 correctly clamps the offset to zero (no reactive room).
                 radius = float("inf")
             iv = _synthetic_input(binding.input_source, binding.parameters, show_time, drone_id)
             odN, odE, odD = reactive_evaluate(
@@ -137,6 +159,47 @@ async def _hold_at_altitude(drone, down_m: float):
         await asyncio.sleep(0.05)
 
 
+# ── Telemetry consumer (cache filler) ─────────────────────────────────────────
+
+async def telemetry_consumer(
+    drone,
+    drone_id:    int,
+    runtime:     SkyforgeRuntime,
+    abort_event: asyncio.Event,
+) -> None:
+    """Stream position/velocity into the runtime cache in its own task.
+
+    CRITICAL: plain ``async for`` — NEVER wrapped in ``asyncio.wait_for``.
+    Cancelling a pending ``__anext__()`` on a MAVSDK telemetry generator
+    permanently breaks it (every later read raises ``StopAsyncIteration``), which
+    is what previously stranded drones holding at altitude while formations never
+    moved. The control loop only ever READS the cache this fills. Mirrors
+    commander/dynamic_adapter.py:telemetry_consumer.
+    """
+    home   = runtime.show.drones[drone_id].home_ned
+    hn, he = home.n, home.e
+    while not abort_event.is_set():
+        try:
+            async for pv in drone.telemetry.position_velocity_ned():
+                if abort_event.is_set():
+                    return
+                runtime.current_positions[drone_id] = (
+                    pv.position.north_m + hn,
+                    pv.position.east_m  + he,
+                    pv.position.down_m,
+                )
+                runtime.current_velocities[drone_id] = (
+                    pv.velocity.north_m_s,
+                    pv.velocity.east_m_s,
+                    pv.velocity.down_m_s,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Stream ended/errored — back off briefly and re-subscribe.
+            await asyncio.sleep(0.5)
+
+
 # ── Per-drone coroutine ───────────────────────────────────────────────────────
 
 async def run_drone_skyforge(
@@ -149,6 +212,10 @@ async def run_drone_skyforge(
     ready_count: list,             # [int] — incremented as each drone becomes ready
 ):
     tag        = f"[drone {drone_id}]"
+    if not (0 <= drone_id < runtime.n_drones):
+        raise ValueError(
+            f"drone_id {drone_id} out of range [0, {runtime.n_drones}) — malformed show?"
+        )
     home       = runtime.show.drones[drone_id].home_ned
     traj       = runtime.show.trajectories[drone_id]
     led_track  = runtime.show.led_tracks[drone_id]
@@ -211,9 +278,10 @@ async def run_drone_skyforge(
 
     # ── Synchronise show clock ────────────────────────────────────────────────
     ready_count[0] += 1
-    print(f"{tag} Ready ({ready_count[0]}/{runtime.n_drones})")
+    target = runtime.ready_target
+    print(f"{tag} Ready ({ready_count[0]}/{target})")
 
-    if ready_count[0] >= runtime.n_drones:
+    if ready_count[0] >= target:
         # Last drone ready: record shared start time and fire the event.
         show_start_time[0] = time.monotonic() - TAKEOFF_OFFSET_S
         show_start_event.set()
@@ -262,13 +330,17 @@ async def run_drone_skyforge(
     except asyncio.CancelledError:
         pass
 
-    # ── Polynomial control loop ───────────────────────────────────────────────
-    pos_stream   = drone.telemetry.position_velocity_ned().__aiter__()
+    # ── Polynomial control loop (cache-based) ─────────────────────────────────
+    # Telemetry is maintained by telemetry_consumer() in its own task; here we
+    # only READ runtime.current_positions/current_velocities. This loop NEVER
+    # wraps a telemetry __anext__ in wait_for — doing so permanently breaks the
+    # MAVSDK stream and silently strands drones (see telemetry_consumer above and
+    # commander/dynamic_adapter.py).
     prev_led_rgb = (-1.0, -1.0, -1.0)
     led_tick     = 0
     led_task: asyncio.Task | None = None
 
-    while True:
+    while not abort_event.is_set():
         tick_start = time.monotonic()
         show_time  = tick_start - show_start_time[0]
 
@@ -276,47 +348,31 @@ async def run_drone_skyforge(
             print(f"{tag} Show complete at t={show_time:.1f}s")
             break
 
-        # Read telemetry
-        try:
-            pv = await asyncio.wait_for(pos_stream.__anext__(), timeout=0.5)
-        except (asyncio.TimeoutError, StopAsyncIteration):
-            await asyncio.sleep(CONTROL_DT)
-            continue
-
-        # Convert local → global NED; store position and velocity for APF
-        global_N = pv.position.north_m + home.n
-        global_E = pv.position.east_m  + home.e
-        runtime.current_positions[drone_id]  = (global_N, global_E, pv.position.down_m)
-        runtime.current_velocities[drone_id] = (
-            pv.velocity.north_m_s,
-            pv.velocity.east_m_s,
-            pv.velocity.down_m_s,
-        )
-
-        # Nominal setpoint from polynomial (global NED)
+        # Nominal setpoint from polynomial (global NED) + reactive deviation
         nom = traj.evaluate(show_time)
-
-        # Reactive deviation
         rdN, rdE, rdD = runtime.reactive_offset(drone_id, show_time)
 
-        # APF repulsion (3D, velocity-aware)
-        others_ned = [
-            runtime.current_positions[j]
-            for j in range(runtime.n_drones)
-            if j != drone_id and j in runtime.current_positions
-        ]
-        own_vel = runtime.current_velocities.get(drone_id, (0.0, 0.0, 0.0))
-        apf_dN, apf_dE, apf_dD = compute_apf_offset(
-            (global_N, global_E, pv.position.down_m),
-            own_vel,
-            others_ned,
-            drone_id,
-        )
-
-        # Convert global → local NED and send setpoint
-        lN = (nom.n + rdN + apf_dN) - home.n
-        lE = (nom.e + rdE + apf_dE) - home.e
-        lD = nom.d + rdD + apf_dD
+        pos = runtime.current_positions.get(drone_id)
+        if pos is None:
+            # Telemetry not flowing yet — command nominal + reactive only (skip
+            # APF since we lack our own position). Convert global → local.
+            lN = (nom.n + rdN) - home.n
+            lE = (nom.e + rdE) - home.e
+            lD =  nom.d + rdD
+        else:
+            global_N, global_E, global_D = pos
+            others_ned = [
+                runtime.current_positions[j]
+                for j in range(runtime.n_drones)
+                if j != drone_id and j in runtime.current_positions
+            ]
+            own_vel = runtime.current_velocities.get(drone_id, (0.0, 0.0, 0.0))
+            apf_dN, apf_dE, apf_dD = compute_apf_offset(
+                (global_N, global_E, global_D), own_vel, others_ned, drone_id,
+            )
+            lN = (nom.n + rdN + apf_dN) - home.n
+            lE = (nom.e + rdE + apf_dE) - home.e
+            lD =  nom.d + rdD + apf_dD
 
         try:
             await drone.offboard.set_position_ned(PositionNedYaw(lN, lE, lD, 0.0))

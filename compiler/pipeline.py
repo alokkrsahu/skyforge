@@ -72,28 +72,88 @@ class CompilePipeline:
 
         # Stage 1 — compile waypoints → polynomial trajectories
         show: ShowFile = builder.compile()
+        n = len(show.trajectories)
 
         # Stage 1.5 — resolve nominal separation violations before envelope computation
+        deconflicted        = False
+        deconflict_resolved = True
+        dc_cfg              = cfg.deconflict_cfg
         if cfg.deconflict:
-            dc = _deconflict(show, cfg.deconflict_cfg)
+            # Adaptive iteration budget: larger fleets pack more crossings, so
+            # give them more correction passes (capped to keep compile bounded).
+            adaptive_iters = min(50, max(dc_cfg.max_iters, n))
+            if adaptive_iters != dc_cfg.max_iters:
+                dc_cfg = dataclasses.replace(dc_cfg, max_iters=adaptive_iters)
+            dc = _deconflict(show, dc_cfg)
             show = dc.show
+            deconflicted        = True
+            deconflict_resolved = dc.resolved
             if dc.conflicts_found:
                 status = "resolved" if dc.resolved else f"UNRESOLVED after {dc.iters_run} iters"
                 print(
                     f"[pipeline] deconfliction: {dc.conflicts_found} conflict window(s), "
                     f"status={status}"
                 )
+            if not dc.resolved:
+                # Known-unsafe: deconfliction couldn't clear all conflicts. Don't burn
+                # O(n²·T·segments) computing envelopes / validating the now heavily-knotted
+                # trajectories — fail fast. The runtime gate rejects it anyway (status
+                # stays "unvalidated").
+                print(
+                    "[pipeline] WARNING: deconfliction did NOT resolve all conflicts — "
+                    "show is UNSAFE; failing fast without envelope/validation."
+                )
+                meta = dataclasses.replace(
+                    show.metadata,
+                    compile_min_sep_m     = cfg.validation.min_sep_m,
+                    compile_deconflict_hz = dc_cfg.sample_hz,
+                    compile_validate_hz   = max(cfg.validation.sample_hz, dc_cfg.sample_hz),
+                    deconflicted          = True,
+                    deconflict_resolved   = False,
+                )
+                show = dataclasses.replace(show, metadata=meta)
+                validation = ValidationResult(
+                    passed=False,
+                    errors=[
+                        f"deconfliction did not resolve all separation conflicts after "
+                        f"{dc.iters_run} iters — show is UNSAFE and was not validated"
+                    ],
+                )
+                if cfg.fail_on_error:
+                    raise RuntimeError(f"Show validation failed:\n{validation}")
+                return CompileResult(show=show, validation=validation)
 
         # Stage 2 — replace placeholder envelopes with computed ones
-
         if cfg.compute_envelopes:
             envelopes = compute_envelopes(show, cfg.envelope)
             show = dataclasses.replace(show, envelopes=envelopes)
 
+        # The validator must sample at least as finely as deconfliction, else it
+        # can pass a show that still has sub-sample-interval conflicts.
+        val_cfg = cfg.validation
+        if cfg.deconflict and val_cfg.sample_hz < dc_cfg.sample_hz:
+            print(
+                f"[pipeline] WARNING: validate_hz ({val_cfg.sample_hz}) < deconflict_hz "
+                f"({dc_cfg.sample_hz}); raising validate_hz to match."
+            )
+            val_cfg = dataclasses.replace(val_cfg, sample_hz=dc_cfg.sample_hz)
+
+        # Stamp the compile-time safety contract into metadata so the runtime can
+        # verify it is flying a show planned under compatible assumptions.
+        meta = dataclasses.replace(
+            show.metadata,
+            compile_min_sep_m     = val_cfg.min_sep_m,
+            compile_deconflict_hz = dc_cfg.sample_hz if cfg.deconflict else 0.0,
+            compile_validate_hz   = val_cfg.sample_hz,
+            deconflicted          = deconflicted,
+            deconflict_resolved   = deconflict_resolved,
+        )
+        show = dataclasses.replace(show, metadata=meta)
+
         # Stage 3 — validate
         validation: Optional[ValidationResult] = None
         if cfg.validate:
-            validation = validate(show, cfg.validation)
+            validation = validate(show, val_cfg)
             if validation.passed:
                 meta = dataclasses.replace(show.metadata, validation_status="validated")
                 show = dataclasses.replace(show, metadata=meta)

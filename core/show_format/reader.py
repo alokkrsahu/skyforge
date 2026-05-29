@@ -33,6 +33,13 @@ def _metadata(d: dict) -> ShowMetadata:
         duration_s        = d["duration_s"],
         n_drones          = d["n_drones"],
         validation_status = d.get("validation_status", "unvalidated"),
+        # Compile-time safety contract (schema v2) — default to "unknown" so
+        # pre-v2 show files still load.
+        compile_min_sep_m     = d.get("compile_min_sep_m", 0.0),
+        compile_deconflict_hz = d.get("compile_deconflict_hz", 0.0),
+        compile_validate_hz   = d.get("compile_validate_hz", 0.0),
+        deconflicted          = d.get("deconflicted", False),
+        deconflict_resolved   = d.get("deconflict_resolved", True),
     )
 
 def _drone_spec(d: dict) -> DroneSpec:

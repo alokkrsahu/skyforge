@@ -72,22 +72,52 @@ def _count_crossings(
     return count
 
 
+def _min_separation(
+    ci: tuple[float, float], ti: tuple[float, float],
+    cj: tuple[float, float], tj: tuple[float, float],
+) -> float:
+    """
+    Closest approach (m) between two drones moving linearly current→target over
+    the SAME normalised transition time [0, 1] (the show advances all drones in
+    lock-step). Closed form: |A + sB| minimised over s∈[0,1].
+
+    Unlike _segments_cross this catches collinear / same-direction-different-speed
+    paths that pass through each other without a geometric "X" intersection.
+    """
+    ax, ay = ci[0] - cj[0], ci[1] - cj[1]                       # relative start
+    bx = (ti[0] - ci[0]) - (tj[0] - cj[0])                      # relative velocity
+    by = (ti[1] - ci[1]) - (tj[1] - cj[1])
+    bb = bx * bx + by * by
+    if bb < 1e-12:
+        s = 0.0                                                 # no relative motion
+    else:
+        s = max(0.0, min(1.0, -(ax * bx + ay * by) / bb))
+    return math.hypot(ax + s * bx, ay + s * by)
+
+
 def assign_nocross(
     current_positions: list[tuple[float, float]],
     target_positions:  list[tuple[float, float]],
+    min_sep_m:         float = 1.5,
 ) -> list[int]:
     """
-    Hungarian assignment refined by greedy first-crossing swaps.
+    Hungarian assignment refined by greedy swaps so paths neither cross nor pass
+    too close.
 
-    Finds the first pair (i, j) whose paths cross and swaps their targets
-    immediately.  Repeats until no crossings remain or the iteration cap
-    (min(n², 300)) is hit.  O(n²) per iteration — fast even for n=100
-    because well-designed formations start with very few crossings.
+    Phase A — swap the first pair whose straight paths geometrically cross.
+    Phase B — swap the worst pair whose *time-parameterised* closest approach is
+              below min_sep_m (catches collinear / same-line collisions Phase A's
+              segment test misses — e.g. (4,4)→(2,2) vs (6,6)→(0,0), which collide
+              at (3,3)). Each accepted swap strictly increases that pair's
+              clearance; if the worst pair can't be improved by swapping its own
+              targets we stop (validation then flags any residual) — this also
+              guarantees termination. O(n²) per iteration, cap min(n², 300).
     """
     assignment = assign(current_positions, target_positions)
     n   = len(assignment)
     cap = min(n * n, 300)
 
+    # ── Phase A: eliminate geometric crossings ────────────────────────────────
     for _ in range(cap):
         found = False
         for i in range(n):
@@ -102,6 +132,31 @@ def assign_nocross(
             if found:
                 break
         if not found:
+            break
+
+    # ── Phase B: enforce time-parameterised separation ────────────────────────
+    for _ in range(cap):
+        worst_sep = min_sep_m
+        wi = wj = -1
+        for i in range(n):
+            for j in range(i + 1, n):
+                sep = _min_separation(
+                    current_positions[i], target_positions[assignment[i]],
+                    current_positions[j], target_positions[assignment[j]],
+                )
+                if sep < worst_sep:
+                    worst_sep, wi, wj = sep, i, j
+        if wi < 0:
+            break   # every pair clears min_sep_m
+
+        assignment[wi], assignment[wj] = assignment[wj], assignment[wi]
+        after = _min_separation(
+            current_positions[wi], target_positions[assignment[wi]],
+            current_positions[wj], target_positions[assignment[wj]],
+        )
+        if after <= worst_sep:
+            # Swapping the worst pair's targets did not help — revert and stop.
+            assignment[wi], assignment[wj] = assignment[wj], assignment[wi]
             break
 
     return assignment

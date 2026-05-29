@@ -41,7 +41,10 @@ class ValidationConfig:
     min_sep_m:    float = 1.5    # hard minimum inter-drone separation (error if violated)
     warn_close_m: float = 2.5    # warn if drones come within this distance
     max_speed_ms: float = 15.0   # warn if any axis speed exceeds this
-    sample_hz:    float = 10.0   # sampling rate for separation / speed checks
+    # Sampling rate for separation / speed checks. Must be >= DeconflictConfig.sample_hz
+    # (20 Hz) so validation can't pass a show that still has sub-sample-interval
+    # conflicts the deconflicter was correcting. CompilePipeline enforces this.
+    sample_hz:    float = 20.0
 
 
 # ── Public entry point ────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import time as _time
 from dataclasses import dataclass, field
 from typing import Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # v2: ShowMetadata carries the compile-time safety contract
 
 
 # ── Primitives ────────────────────────────────────────────────────────────────
@@ -209,6 +209,15 @@ class ShowMetadata:
     duration_s:        float = 0.0
     n_drones:          int   = 0
     validation_status: str   = "unvalidated"   # unvalidated | validated | signed
+    # ── Compile-time safety contract (schema v2) ──────────────────────────────
+    # Persisted so the runtime can verify it is flying a show that was planned &
+    # validated under separation assumptions compatible with its own. 0.0 / False
+    # mean "unknown" — i.e. a show compiled before these fields existed.
+    compile_min_sep_m:     float = 0.0   # hard separation the show was validated for (m)
+    compile_deconflict_hz: float = 0.0   # trajectory-deconfliction sampling rate (Hz)
+    compile_validate_hz:   float = 0.0   # validation sampling rate (Hz)
+    deconflicted:          bool  = False # did trajectory deconfliction run?
+    deconflict_resolved:   bool  = True  # False = residual separation conflicts remain
 
 
 @dataclass
