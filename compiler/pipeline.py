@@ -35,7 +35,12 @@ class CompileConfig:
     deconflict_cfg:    DeconflictConfig = field(default_factory=DeconflictConfig)
     validation:        ValidationConfig = field(default_factory=ValidationConfig)
     compute_envelopes: bool = True    # False → keep placeholder radius_m=0 envelopes
-    deconflict:        bool = True    # False → skip trajectory deconfliction
+    # Phase-separated layered transitions (show_builder) + the landing fix reduce
+    # dense shows to a SPARSE residual on which deconflict already converges, so
+    # the heavy spline-verified layering loop is OFF by default (redundant + slower
+    # on current shows). Turn it on for a denser show where deconflict diverges.
+    verified_layering: bool = False
+    deconflict:        bool = True    # primary residual resolver (converges on the sparse field)
     validate:          bool = True    # False → skip validation entirely
     fail_on_error:     bool = True    # True  → raise RuntimeError when validation fails
 
@@ -70,8 +75,17 @@ class CompilePipeline:
         """
         cfg = self.config
 
-        # Stage 1 — compile waypoints → polynomial trajectories
-        show: ShowFile = builder.compile()
+        # Stage 1 — compile waypoints → polynomial trajectories. With verified
+        # layering on (default), the convergent spline-verified planner is the
+        # PRIMARY collision-avoidance mechanism (deconflict below becomes polish).
+        if cfg.verified_layering:
+            from compiler.verified_layering import plan as _verified_plan
+            show, _vphi = _verified_plan(builder, cfg.validation.min_sep_m)
+            if _vphi > 0:
+                print(f"[pipeline] verified-layering: {_vphi} residual breach-sample(s) "
+                      f"after layering — deconfliction/validation will arbitrate.")
+        else:
+            show = builder.compile()
         n = len(show.trajectories)
 
         # Stage 1.5 — resolve nominal separation violations before envelope computation

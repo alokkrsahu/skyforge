@@ -131,7 +131,9 @@ def test_pipeline_marks_validated_status_on_safe_show():
         def compile(self):
             return self._fixed
 
-    result = CompilePipeline().run(_FixedBuilder(show))
+    # verified_layering re-plans via the real builder (transition_windows / band
+    # overrides); this fixed-show stub exercises only the validate/mark stage.
+    result = CompilePipeline(CompileConfig(verified_layering=False)).run(_FixedBuilder(show))
     assert result.ok, str(result.validation)
     assert result.show.metadata.validation_status == "validated"
 
@@ -168,7 +170,11 @@ def test_pipeline_deconflicts_crossing_show():
         def __init__(self, s): self._s = s
         def compile(self): return self._s
 
-    result = CompilePipeline(CompileConfig(deconflict=True)).run(_CrossingBuilder(show))
+    # Exercises the deconflict stage in isolation on a fixed crossing show
+    # (verified_layering needs the real builder, not this fixed-show stub).
+    result = CompilePipeline(
+        CompileConfig(deconflict=True, verified_layering=False)
+    ).run(_CrossingBuilder(show))
     assert result.ok, str(result.validation)
     assert result.validation.errors == []
     assert result.show.metadata.validation_status == "validated"
