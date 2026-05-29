@@ -6,6 +6,21 @@
 LOG=/tmp/gz_gui.log
 export PATH="/opt/homebrew/bin:$PATH"
 
+# The GUI is launched separately from the physics server, so it does NOT inherit
+# the model/world resource paths PX4 sets for the server. Without them the GUI
+# can't resolve model://x500_base/... meshes & textures and renders drones as
+# bare markers, spamming "Unable to find file" errors. Source PX4's generated
+# gz_env.sh (same GZ_SIM_RESOURCE_PATH / plugin paths / macOS DYLD fallback the
+# server uses); fall back to constructing the paths if it's not present.
+PX4_DIR="${PX4_DIR:-$HOME/src/PX4-Autopilot}"
+GZ_ENV="$PX4_DIR/build/px4_sitl_default/rootfs/gz_env.sh"
+if [ -f "$GZ_ENV" ]; then
+    # shellcheck disable=SC1090
+    source "$GZ_ENV"
+else
+    export GZ_SIM_RESOURCE_PATH="$PX4_DIR/Tools/simulation/gz/models:$PX4_DIR/Tools/simulation/gz/worlds${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
+fi
+
 echo "========================================="
 echo " Gazebo Harmonic GUI"
 echo " Log: $LOG"

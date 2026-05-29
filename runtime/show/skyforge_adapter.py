@@ -19,6 +19,7 @@ import time
 from mavsdk.offboard import OffboardError, PositionNedYaw
 
 from .apf import compute_apf_offset
+from .audio_beat import BeatDetector
 from .config import CONTROL_DT, SHOW_ALT_M
 
 # Add the skyforge package to sys.path so core.* and compiler.* are importable
@@ -35,51 +36,40 @@ from core.reactive.primitives import evaluate as reactive_evaluate
 # so we jump to this offset when the polynomial loop begins.
 TAKEOFF_OFFSET_S = 15.0
 
-_GZ_LIGHT_TOPIC = "/world/default/light_config"
-_GZ_LIGHT_TYPE  = "gz.msgs.Light"
+_GZ_VISUAL_SVC  = "/world/default/visual_config"
+_ARM_VISUALS    = ["5010_motor_base_0", "5010_motor_base_1",
+                   "5010_motor_base_2", "5010_motor_base_3"]
 
+# gz transport needs GZ_IP set to reach the sim's partition; without it the
+# visual_config service call silently times out (no LED change).
+_GZ_ENV = {**os.environ, "GZ_IP": "127.0.0.1"}
 
-# ── Async LED update (avoids fork() + gRPC thread conflict) ──────────────────
 
 async def _led_update(drone_id: int, r: float, g: float, b: float) -> None:
-    """Send LED colour to Gazebo via asyncio subprocess (posix_spawn, not fork)."""
     model = f"x500_{drone_id}"
-    sr, sg, sb = r * 0.3, g * 0.3, b * 0.3
-    arm_lights = [
-        "light_front_left", "light_front_right",
-        "light_rear_left",  "light_rear_right",
-    ]
-    for light_name in arm_lights:
-        name  = f"{model}::base_link::{light_name}"
-        proto = (
-            f'name: "{name}" type: POINT '
-            f'diffuse {{r: {r} g: {g} b: {b} a: 1.0}} '
-            f'specular {{r: {sr:.3f} g: {sg:.3f} b: {sb:.3f} a: 1.0}} '
-            f'range: 5.0 attenuation_constant: 0.3 attenuation_linear: 0.2 '
-            f'attenuation_quadratic: 0.01 intensity: 1.0 is_light_off: false'
-        )
-        proc = await asyncio.create_subprocess_exec(
-            "gz", "topic", "-t", _GZ_LIGHT_TOPIC, "-m", _GZ_LIGHT_TYPE, "-p", proto,
+    mat   = (
+        f"material {{"
+        f"ambient {{r:{r:.3f} g:{g:.3f} b:{b:.3f} a:1}} "
+        f"diffuse {{r:{r:.3f} g:{g:.3f} b:{b:.3f} a:1}} "
+        f"emissive {{r:{r:.3f} g:{g:.3f} b:{b:.3f} a:1}}"
+        f"}}"
+    )
+
+    async def _send(vis: str) -> None:
+        proto = f'name: "{model}::base_link::{vis}" {mat}'
+        proc  = await asyncio.create_subprocess_exec(
+            "gz", "service", "-s", _GZ_VISUAL_SVC,
+            "--reqtype", "gz.msgs.Visual",
+            "--reptype", "gz.msgs.Boolean",
+            "--timeout", "200",
+            "--req", proto,
+            env=_GZ_ENV,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )
         await proc.wait()
-    # Spotlight (downward-facing)
-    name   = f"{model}::base_link::spotlight_down"
-    sr2, sg2, sb2 = r * 0.5, g * 0.5, b * 0.5
-    proto  = (
-        f'name: "{name}" type: SPOT '
-        f'diffuse {{r: {r} g: {g} b: {b} a: 1.0}} '
-        f'specular {{r: {sr2:.3f} g: {sg2:.3f} b: {sb2:.3f} a: 1.0}} '
-        f'direction {{x: 0.0 y: 0.0 z: -1.0}} range: 15.0 '
-        f'attenuation_constant: 0.3 attenuation_linear: 0.05 '
-        f'attenuation_quadratic: 0.001 spot_inner_angle: 0.3 '
-        f'spot_outer_angle: 0.8 spot_falloff: 1.0 intensity: 1.0 is_light_off: false'
-    )
-    proc = await asyncio.create_subprocess_exec(
-        "gz", "topic", "-t", _GZ_LIGHT_TOPIC, "-m", _GZ_LIGHT_TYPE, "-p", proto,
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-    )
-    await proc.wait()
+
+    await asyncio.gather(*(_send(v) for v in _ARM_VISUALS))
+    # Spotlight intentionally off — arm lights provide all visual feedback
 
 
 # ── Input signal synthesis ────────────────────────────────────────────────────
@@ -108,7 +98,10 @@ class SkyforgeRuntime:
         self.show     = show
         self.n_drones = len(show.drones)
         # Written by drone coroutines each tick; read by APF computation
-        self.current_positions: dict[int, tuple[float, float, float]] = {}
+        self.current_positions:  dict[int, tuple[float, float, float]] = {}
+        self.current_velocities: dict[int, tuple[float, float, float]] = {}
+        self.beat = BeatDetector()
+        self.beat.start()
 
     def reactive_offset(self, drone_id: int, show_time: float) -> tuple[float, float, float]:
         """Sum reactive offsets from all active bindings for this drone at show_time."""
@@ -273,6 +266,7 @@ async def run_drone_skyforge(
     pos_stream   = drone.telemetry.position_velocity_ned().__aiter__()
     prev_led_rgb = (-1.0, -1.0, -1.0)
     led_tick     = 0
+    led_task: asyncio.Task | None = None
 
     while True:
         tick_start = time.monotonic()
@@ -289,10 +283,15 @@ async def run_drone_skyforge(
             await asyncio.sleep(CONTROL_DT)
             continue
 
-        # Convert local → global NED
+        # Convert local → global NED; store position and velocity for APF
         global_N = pv.position.north_m + home.n
         global_E = pv.position.east_m  + home.e
-        runtime.current_positions[drone_id] = (global_N, global_E, pv.position.down_m)
+        runtime.current_positions[drone_id]  = (global_N, global_E, pv.position.down_m)
+        runtime.current_velocities[drone_id] = (
+            pv.velocity.north_m_s,
+            pv.velocity.east_m_s,
+            pv.velocity.down_m_s,
+        )
 
         # Nominal setpoint from polynomial (global NED)
         nom = traj.evaluate(show_time)
@@ -300,41 +299,78 @@ async def run_drone_skyforge(
         # Reactive deviation
         rdN, rdE, rdD = runtime.reactive_offset(drone_id, show_time)
 
-        # APF repulsion
-        others_ne = [
-            (runtime.current_positions[j][0], runtime.current_positions[j][1])
+        # APF repulsion (3D, velocity-aware)
+        others_ned = [
+            runtime.current_positions[j]
             for j in range(runtime.n_drones)
             if j != drone_id and j in runtime.current_positions
         ]
-        apf_dN, apf_dE = compute_apf_offset((global_N, global_E), others_ne, drone_id)
+        own_vel = runtime.current_velocities.get(drone_id, (0.0, 0.0, 0.0))
+        apf_dN, apf_dE, apf_dD = compute_apf_offset(
+            (global_N, global_E, pv.position.down_m),
+            own_vel,
+            others_ned,
+            drone_id,
+        )
 
         # Convert global → local NED and send setpoint
         lN = (nom.n + rdN + apf_dN) - home.n
         lE = (nom.e + rdE + apf_dE) - home.e
-        lD = nom.d + rdD
+        lD = nom.d + rdD + apf_dD
 
-        await drone.offboard.set_position_ned(PositionNedYaw(lN, lE, lD, 0.0))
+        try:
+            await drone.offboard.set_position_ned(PositionNedYaw(lN, lE, lD, 0.0))
+        except Exception as exc:
+            print(f"{tag} setpoint error (skipping tick): {exc}")
 
-        # LED update at ~1 Hz — fire-and-forget async subprocess (no fork).
+        # LED update at ~4 Hz — brightness driven by real-time audio beat energy.
         led_tick += 1
-        if led_tick >= 10:
+        if led_tick >= 3:
             led_tick = 0
-            c   = led_track.evaluate(show_time)
-            rgb = (c.r, c.g, c.b)
-            if any(abs(rgb[k] - prev_led_rgb[k]) > 0.05 for k in range(3)):
-                print(f"{tag} LED → r={c.r:.2f} g={c.g:.2f} b={c.b:.2f}  t={show_time:.0f}s")
-                asyncio.create_task(_led_update(drone_id, c.r, c.g, c.b))
-                prev_led_rgb = rgb
+            c          = led_track.evaluate(show_time)
+            beat       = runtime.beat.beat_energy
+            brightness = 0.15 + 0.85 * beat
+            r = min(1.0, c.r * brightness)
+            g = min(1.0, c.g * brightness)
+            b = min(1.0, c.b * brightness)
+            if beat > 0.8:
+                flash = (beat - 0.8) / 0.2
+                r = min(1.0, r + flash * 0.5)
+                g = min(1.0, g + flash * 0.3)
+                b = min(1.0, b + flash * 0.5)
+            rgb = (r, g, b)
+            if any(abs(rgb[k] - prev_led_rgb[k]) > 0.02 for k in range(3)):
+                if led_task is None or led_task.done():
+                    led_task = asyncio.create_task(_led_update(drone_id, r, g, b))
+                    prev_led_rgb = rgb
 
         await asyncio.sleep(max(0.0, CONTROL_DT - (time.monotonic() - tick_start)))
 
     # ── Land ──────────────────────────────────────────────────────────────────
+    # ── Land — staggered to prevent simultaneous descent collisions ───────────
     try:
         await drone.offboard.stop()
     except Exception:
         pass
-    await drone.action.land()
-    async for armed in drone.telemetry.armed():
-        if not armed:
-            print(f"{tag} Disarmed.")
+    stagger_s = drone_id * 1.5
+    if stagger_s > 0:
+        print(f"{tag} Landing in {stagger_s:.1f}s (stagger)...")
+        await asyncio.sleep(stagger_s)
+    for attempt in range(3):
+        try:
+            await drone.action.land()
+            print(f"{tag} Land command accepted")
             break
+        except Exception as e:
+            print(f"{tag} land() attempt {attempt + 1} failed: {e}")
+            if attempt < 2:
+                await asyncio.sleep(2.0)
+    try:
+        async def _wait_disarm():
+            async for armed in drone.telemetry.armed():
+                if not armed:
+                    return
+        await asyncio.wait_for(_wait_disarm(), timeout=30.0)
+        print(f"{tag} Disarmed.")
+    except asyncio.TimeoutError:
+        print(f"{tag} Disarm timeout — drone may still be in the air")

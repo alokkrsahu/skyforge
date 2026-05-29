@@ -43,10 +43,16 @@ echo "[t5] Waiting for $N PX4 instances to report 'home set'..."
 
 # ── Wait for all N drones ─────────────────────────────────────────────────────
 for (( i=0; i<N; i++ )); do
-    while ! grep -q "home set" "/tmp/px4_sitl_${i}.log" 2>/dev/null; do
+    while true; do
+        if grep -q "Startup script returned successfully" "/tmp/px4_sitl_${i}.log" 2>/dev/null; then
+            echo "[t5] Drone $i ready"
+            break
+        elif grep -q "Startup script returned with return value:" "/tmp/px4_sitl_${i}.log" 2>/dev/null; then
+            echo "[t5] ERROR: Drone $i rcS failed — restart t1_sitl.sh before continuing"
+            exit 1
+        fi
         sleep 1
     done
-    echo "[t5] Drone $i ready"
 done
 echo "[t5] All $N drones ready"
 
@@ -56,4 +62,4 @@ echo "[t5] Press Ctrl-C to abort."
 echo ""
 
 cd "$SCRIPT_DIR"
-exec python3 -u run_skyforge.py "$SHOW_FILE"
+exec python3 -u run_skyforge.py "$SHOW_FILE" 2> >(grep -v "Sending message failed\|not-existing command\|callback queue slow" >&2)

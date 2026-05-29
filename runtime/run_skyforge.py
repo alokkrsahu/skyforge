@@ -12,29 +12,33 @@ Default show: ../shows/four_drone_demo.skyforge.json
 """
 import os
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+os.environ.setdefault("MAVSDK_CALLBACK_DEBUGGING", "0")
 
 import asyncio
 import sys
 
 # ── Path setup ────────────────────────────────────────────────────────────────
-_HERE         = os.path.dirname(os.path.abspath(__file__))   # skyforge/runtime/
-_SKYFORGE_DIR = os.path.abspath(os.path.join(_HERE, ".."))   # skyforge/
-for _p in (_SKYFORGE_DIR, _HERE):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+_HERE        = os.path.dirname(os.path.abspath(__file__))
+_SKYFORGE_DIR = os.path.abspath(os.path.join(_HERE, ".."))   # skyforge/ (this file lives in skyforge/runtime/)
+if _SKYFORGE_DIR not in sys.path:
+    sys.path.insert(0, _SKYFORGE_DIR)
 
 # LED control subprocess needs GZ_IP to reach the Gazebo transport server.
 os.environ.setdefault("GZ_IP", "127.0.0.1")
 
+import mavsdk as _mavsdk_mod
 from mavsdk import System
 
 from core.show_format.reader import from_json, from_msgpack
 from show.skyforge_adapter import SkyforgeRuntime, run_drone_skyforge
 
-_MAVLINK_BASE = 14540
-_GRPC_BASE    = 50051
+_MAVLINK_BASE      = 15000
+_GRPC_BASE         = 50051
+_MAVSDK_SERVER_BIN = os.path.join(
+    os.path.dirname(_mavsdk_mod.__file__), "bin", "mavsdk_server"
+)
 
-DEFAULT_SHOW = os.path.join(_SKYFORGE_DIR, "shows", "four_drone_demo.skyforge.json")
+DEFAULT_SHOW = os.path.join(_SKYFORGE_DIR, "shows/four_drone_demo.skyforge.json")
 
 
 def load_show(path: str):
@@ -77,15 +81,31 @@ async def main(show_path: str):
     grpc_ports    = [_GRPC_BASE    + i for i in range(n)]
     mavlink_ports = [_MAVLINK_BASE + i for i in range(n)]
 
-    # ── Sequential connect ────────────────────────────────────────────────────
-    drones = []
-    for i in range(n):
-        drone = System(port=grpc_ports[i])
-        print(f"[run_skyforge] Connecting drone {i} on udpin://:{mavlink_ports[i]} ...")
-        await drone.connect(system_address=f"udpin://:{mavlink_ports[i]}")
-        await wait_healthy(drone, i)
-        drones.append(drone)
+    # ── Parallel connect via pre-spawned servers ──────────────────────────────
+    print(f"[run_skyforge] Spawning {n} MAVSDK servers in parallel...")
+    async def _spawn(i: int) -> None:
+        await asyncio.create_subprocess_exec(
+            _MAVSDK_SERVER_BIN,
+            "-p", str(grpc_ports[i]),
+            f"udpin://0.0.0.0:{mavlink_ports[i]}",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+    await asyncio.gather(*[_spawn(i) for i in range(n)])
+    await asyncio.sleep(2.5)
 
+    async def _connect(i: int) -> System:
+        await asyncio.sleep(i * 0.05)
+        drone = System(mavsdk_server_address="localhost", port=grpc_ports[i])
+        print(f"[run_skyforge] Connecting drone {i} on udpin://0.0.0.0:{mavlink_ports[i]} ...")
+        await drone.connect()
+        await wait_healthy(drone, i)
+        try:
+            await drone.telemetry.set_rate_position_velocity_ned(10.0)
+        except Exception:
+            pass
+        return drone
+
+    drones = list(await asyncio.gather(*[_connect(i) for i in range(n)]))
     print(f"\n[run_skyforge] All {n} drones connected. Starting in 2 s...\n")
     await asyncio.sleep(2.0)
 
@@ -96,13 +116,18 @@ async def main(show_path: str):
     ready_count      = [0]      # [int]   — incremented as each drone enters offboard
 
     # ── Run all drone coroutines concurrently ─────────────────────────────────
-    await asyncio.gather(*[
+    # return_exceptions=True: one drone failure doesn't cascade-cancel the rest.
+    results = await asyncio.gather(*[
         run_drone_skyforge(
             i, drones[i], runtime,
             show_start_event, abort_event, show_start_time, ready_count,
         )
         for i in range(n)
-    ])
+    ], return_exceptions=True)
+
+    for i, r in enumerate(results):
+        if isinstance(r, Exception):
+            print(f"[run_skyforge] Drone {i} exited with exception: {r}")
 
     print("\n[run_skyforge] Show finished.")
 

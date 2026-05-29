@@ -296,6 +296,21 @@ def get_formation(
                 scale_m = float(part[6:])
         return text(string, n=n, scale_m=scale_m)
 
+    # "grid:spacing=4" or "grid:cols=3:spacing=4" — keyword params after the name
+    if ":" in name:
+        base, *kv_parts = name.split(":")
+        if base in _DISPATCH:
+            kwargs: dict = {}
+            for kv in kv_parts:
+                if "=" in kv:
+                    k, v = kv.split("=", 1)
+                    kwargs[k.strip()] = float(v.strip())
+            fn = _DISPATCH[base]
+            import inspect
+            valid = set(inspect.signature(fn).parameters) - {"n"}
+            filtered = {k: v for k, v in kwargs.items() if k in valid}
+            return fn(n, **filtered)
+
     if name in _DISPATCH:
         return _DISPATCH[name](n)
 

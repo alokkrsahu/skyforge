@@ -67,8 +67,8 @@ builder = ShowBuilder(
  .add_act("v_shape",   center_ne=(_cx, _cy),  transition_s=12.0, hold_s=6.0)
  # Act 7: reform circle before descent
  .add_act("circle",    center_ne=(_cx, _cy),  transition_s=12.0, hold_s=5.0)
- # Act 8: compress back to landing grid
- .add_act("grid",      center_ne=(_cx, _cy),  transition_s=15.0, hold_s=5.0)
+ # Act 8: spread to wide landing grid (4 m spacing) to ensure safe descent separation
+ .add_act("grid:spacing=4", center_ne=(_cx, _cy), transition_s=15.0, hold_s=8.0)
 )
 
 # ── LED colour timeline ───────────────────────────────────────────────────────

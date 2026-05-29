@@ -28,10 +28,16 @@ DRONE_HOMES  = [
 TAKEOFF_ALT_M  = 5.0
 SHOW_ALT_M     = 5.0
 
-# APF collision avoidance
-APF_D0         = 3.0   # influence radius (m)
-APF_K          = 0.5   # repulsion gain
-APF_MAX_OFFSET = 1.5   # clamp total repulsion offset (m)
+# APF collision avoidance — horizontal (NE plane)
+APF_D0         = 4.0   # influence radius (m)
+APF_K          = 0.8   # repulsion gain
+APF_MAX_OFFSET = 2.5   # clamp total NE repulsion offset (m)
+# APF — vertical axis
+APF_D0_VERT    = 3.0   # vertical influence radius (m)
+APF_K_VERT     = 0.4   # vertical repulsion gain
+APF_MAX_VERT   = 1.5   # clamp vertical repulsion offset (m)
+# APF — emergency hold threshold
+APF_MIN_SEP_M  = 1.2   # hard minimum separation; triggers max-strength repulsion
 
 # Barrier convergence (legacy; not used by Skyforge adapter)
 BARRIER_THRESHOLD_M = 0.5
