@@ -12,8 +12,10 @@ from typing import Union
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from compiler.formations import get_formation
+from compiler.assignment import assign_nocross
 
 from .dynamic_adapter import DynamicRuntime
+from show.config import MIN_SEP_M
 
 
 _COLOR_NAMES: dict[str, tuple[float, float, float]] = {
@@ -96,14 +98,30 @@ class FleetCommander:
             spec = f"text:{spec.upper()}"
 
         try:
-            offsets = get_formation(spec, rt.n_drones)
+            # Scale the formation so neighbours clear the planned separation. Without
+            # this the raw fixed-radius formations pack sub-metre at scale.
+            offsets = get_formation(spec, rt.n_drones, min_spacing_m=MIN_SEP_M + 1.0)
         except ValueError as e:
             return f"Error: {e}"
 
+        # Assign drones to slots minimising path crossings (Hungarian + separation
+        # repair) from their CURRENT positions, rather than the naive drone-i→slot-i
+        # mapping — the latter sends drones straight through each other on a dense
+        # pattern change (e.g. text:A → text:B). Single altitude + horizontal-only
+        # move keeps it PX4-trackable; APF stays as the reactive safety net.
         cx, cy  = rt.formation_center
-        end_pos = {i: (cx + dN, cy + dE, -rt.alt_m) for i, (dN, dE) in enumerate(offsets)}
+        targets = [(cx + dN, cy + dE) for dN, dE in offsets]
+        current = []
+        for i in range(rt.n_drones):
+            p = rt.current_positions.get(i) or rt.hold_pos.get(i, (cx, cy, -rt.alt_m))
+            current.append((p[0], p[1]))
+        assignment = assign_nocross(current, targets, MIN_SEP_M)
+        end_pos = {
+            i: (targets[assignment[i]][0], targets[assignment[i]][1], -rt.alt_m)
+            for i in range(rt.n_drones)
+        }
         rt.start_transition(end_pos, transition_s)
-        return f"Transitioning to {spec!r} over {transition_s:.1f} s"
+        return f"Transitioning to {spec!r} over {transition_s:.1f} s (scaled + crossing-free assignment)"
 
     async def move(
         self,

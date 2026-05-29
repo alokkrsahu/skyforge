@@ -69,6 +69,33 @@ def test_min_separation_parallel_translation_safe():
     assert _min_separation((4, 4), (0, 0), (6, 6), (2, 2)) > 2.8
 
 
+def test_letter_transition_scaled_assigned_is_safe():
+    """The live-commander fix — scale the formation + assign_nocross — keeps a dense
+    text:A→text:B transition clear of min_sep, whereas the naive index-mapped move
+    (drone i→slot i, unscaled) collides (drones pass through each other)."""
+    import numpy as np
+    from compiler.formations import get_formation
+    N, MIN = 16, 1.5
+
+    def transit_min(sA, sB, scaled, assign):
+        sp = (MIN + 1.0) if scaled else 0.0
+        A = np.array(get_formation(sA, N, min_spacing_m=sp))
+        B = np.array(get_formation(sB, N, min_spacing_m=sp))
+        if assign:
+            asn = assign_nocross([tuple(p) for p in A], [tuple(p) for p in B], MIN)
+            B = np.array([B[asn[i]] for i in range(N)])
+        worst = np.inf
+        for s in np.linspace(0, 1, 80):
+            a = s * s * (3 - 2 * s)                       # smoothstep, like the commander
+            P = A + (B - A) * a
+            d = np.sqrt(((P[:, None] - P[None]) ** 2).sum(-1)); np.fill_diagonal(d, np.inf)
+            worst = min(worst, d.min())
+        return worst
+
+    assert transit_min("text:M", "text:U", scaled=False, assign=False) < MIN   # naive collides
+    assert transit_min("text:M", "text:U", scaled=True,  assign=True)  >= MIN  # fixed: safe
+
+
 def test_collinear_swap_repaired():
     """The exact four-drone act-7 geometry that used to collide at (3,3): the
     separation-repair must re-pair the diagonal drones so no pair passes < 1.5 m."""
