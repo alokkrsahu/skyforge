@@ -30,13 +30,15 @@ import mavsdk as _mavsdk_mod
 from mavsdk import System
 
 from core.show_format.reader import from_json, from_msgpack
-from show.config import MIN_SEP_M, APF_MIN_SEP_M
+from show.config import (
+    MIN_SEP_M, APF_MIN_SEP_M,
+    MAVLINK_BASE as _MAVLINK_BASE, GRPC_BASE as _GRPC_BASE,
+    GCS_BEACON_MAVLINK, GCS_BEACON_GRPC,
+)
 from show.skyforge_adapter import (
     SkyforgeRuntime, run_drone_skyforge, telemetry_consumer,
 )
 
-_MAVLINK_BASE      = 15000
-_GRPC_BASE         = 50051
 _MAVSDK_SERVER_BIN = os.path.join(
     os.path.dirname(_mavsdk_mod.__file__), "bin", "mavsdk_server"
 )
@@ -116,7 +118,7 @@ async def main(show_path: str, allow_unvalidated: bool = False):
     # worked if a beacon was left running from a prior commander session.)
     print("[run_skyforge] Spawning GCS beacon on port 14550...")
     await asyncio.create_subprocess_exec(
-        _MAVSDK_SERVER_BIN, "-p", "50050", "udpin://0.0.0.0:14550",
+        _MAVSDK_SERVER_BIN, "-p", str(GCS_BEACON_GRPC), f"udpin://0.0.0.0:{GCS_BEACON_MAVLINK}",
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
     )
     await asyncio.sleep(0.5)

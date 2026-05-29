@@ -55,6 +55,33 @@ def test_led_track_interpolation():
     assert abs(mid.g - 0.5) < 1e-10
 
 
+def test_reader_rejects_nan_coeff():
+    """A NaN polynomial coeff must be rejected at load (else it sails past the
+    validator's `<` checks and the show is wrongly stamped 'validated')."""
+    import pytest
+    from core.show_format.reader import _from_dict
+    from core.show_format.writer import _to_dict
+    from shows.four_drone_demo import builder
+
+    d = _to_dict(builder.compile())
+    d["trajectories"][0]["segments"][0]["coeffs_n"][0] = float("nan")
+    with pytest.raises(ValueError):
+        _from_dict(d)
+
+
+def test_reader_rejects_length_mismatch():
+    """len(trajectories) != n_drones must be rejected at load (no silent IndexError later)."""
+    import pytest
+    from core.show_format.reader import _from_dict
+    from core.show_format.writer import _to_dict
+    from shows.four_drone_demo import builder
+
+    d = _to_dict(builder.compile())
+    d["trajectories"].pop()           # one fewer trajectory than n_drones
+    with pytest.raises(ValueError):
+        _from_dict(d)
+
+
 def test_json_round_trip():
     from shows.four_drone_demo import builder
     show = builder.compile()

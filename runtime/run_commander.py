@@ -31,9 +31,10 @@ from commander.dynamic_adapter import (
 )
 from commander.commander import FleetCommander
 from commander.cli import cli_loop
-
-_MAVLINK_BASE      = 15000
-_GRPC_BASE         = 50051
+from show.config import (
+    MAVLINK_BASE as _MAVLINK_BASE, GRPC_BASE as _GRPC_BASE,
+    GCS_BEACON_MAVLINK, GCS_BEACON_GRPC,
+)
 _MAVSDK_SERVER_BIN = os.path.join(
     os.path.dirname(_mavsdk_mod.__file__), "bin", "mavsdk_server"
 )
@@ -80,7 +81,7 @@ async def main(n: int) -> None:
     # satisfying the GCS-connected check for the whole fleet.
     print("[run_commander] Spawning GCS beacon on port 14550...")
     await asyncio.create_subprocess_exec(
-        _MAVSDK_SERVER_BIN, "-p", "50050", "udpin://0.0.0.0:14550",
+        _MAVSDK_SERVER_BIN, "-p", str(GCS_BEACON_GRPC), f"udpin://0.0.0.0:{GCS_BEACON_MAVLINK}",
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
     )
     await asyncio.sleep(0.5)

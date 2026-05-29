@@ -1,28 +1,18 @@
-"""Central configuration — all numeric constants."""
-import math
-import os
+"""Central configuration — numeric constants and port assignments (single source of truth)."""
 
 # Control loop
 CONTROL_HZ = 10
 CONTROL_DT  = 1.0 / CONTROL_HZ   # 0.1 s
 
-# Fleet size — override with N_DRONES env var for multi-drone runs
-N_DRONES = int(os.environ.get("N_DRONES", "4"))
-
-# MAVSDK ports: one per drone, starting from base values
-_MAVLINK_BASE = 14540
-_GRPC_BASE    = 50051
-MAVLINK_PORTS = [_MAVLINK_BASE + i for i in range(N_DRONES)]
-GRPC_PORTS    = [_GRPC_BASE    + i for i in range(N_DRONES)]
-
-# Drone home positions in global NED (North_m, East_m).
-# Layout: square grid with 2 m spacing.
-#   drone 0: (0,0), drone 1: (0,2), …
-_GRID_COLS   = math.ceil(math.sqrt(N_DRONES))
-DRONE_HOMES  = [
-    (2.0 * (i // _GRID_COLS), 2.0 * (i % _GRID_COLS))
-    for i in range(N_DRONES)
-]
+# ── MAVSDK / PX4 ports — SINGLE SOURCE OF TRUTH ──────────────────────────────
+# Per-drone onboard MAVLink link is UDP MAVLINK_BASE+i and MUST match the live
+# px4-rc.mavlink in the PX4 build (15000+i). gRPC for mavsdk_server i is GRPC_BASE+i.
+# The GCS beacon listens on GCS_BEACON_MAVLINK to satisfy PX4's hard-coded
+# remote=14550 "connected to GCS" check (without it PX4 denies arm).
+MAVLINK_BASE       = 15000
+GRPC_BASE          = 50051
+GCS_BEACON_MAVLINK = 14550
+GCS_BEACON_GRPC    = 50050
 
 # Altitude
 TAKEOFF_ALT_M  = 5.0
@@ -54,6 +44,3 @@ APF_MIN_SEP_M  = MIN_SEP_M - APF_EMERGENCY_BUFFER_M   # 1.2 m
 # drone 0, so head-on pairs get slightly different offsets and don't deadlock.
 APF_PERTURB_MOD    = 10
 APF_PERTURB_STEP_M = 0.01   # max bias = (MOD-1)*STEP = 0.09 m, independent of N
-
-# Barrier convergence (legacy; not used by Skyforge adapter)
-BARRIER_THRESHOLD_M = 0.5

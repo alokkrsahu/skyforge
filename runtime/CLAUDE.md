@@ -16,7 +16,6 @@ Three terminals are required. Always start in order:
 # Terminal 3 — choose one mode:
 ./t6_commander.sh [N]     # interactive REPL (live commands)
 ./t5_skyforge.sh [file]   # pre-programmed polynomial show
-./t4_show.sh              # traditional coordinator-based show (4 drones)
 ```
 
 Direct Python invocations (same virtualenv at `~/src/PX4-Autopilot/.venv`):
@@ -33,7 +32,7 @@ pkill -f "run_commander"; pkill -9 -f "mavsdk_server"; sleep 2
 
 ## Architecture
 
-### Three Execution Modes
+### Two Execution Modes
 
 **Interactive commander** (`run_commander.py` + `commander/`):
 - `FleetCommander` (commander.py) is the high-level API: `takeoff`, `land`, `formation`, `move`, `set_altitude`, `set_color`, `status`, `abort`
@@ -44,12 +43,13 @@ pkill -f "run_commander"; pkill -9 -f "mavsdk_server"; sleep 2
 
 **Skyforge show** (`run_skyforge.py` + `show/skyforge_adapter.py`):
 - Loads `.skyforge.json` (piecewise polynomial trajectories) via `../core/show_format`
+- Refuses to fly unless `validation_status == "validated"` (`--allow-unvalidated` to override)
 - Drones sync on `show_start_event` then evaluate polynomials at each 10 Hz tick
 - No convergence barrier; show time drives everything
 
-**Traditional show** (`run_show.py` + `show/`):
-- `ShowCoordinator` sequences acts (formation + hold times), `ShowBarrier` synchronizes drones before advancing
-- `BezierSegment` interpolates smooth curves; fixed 4-drone config from `show/config.py`
+> The legacy coordinator-based "traditional show" (`run_show.py`, `t4_show.sh`,
+> `show/{coordinator,barrier,bezier,drone_controller,formations}.py`) was **removed** — it was
+> broken against the upgraded 3D APF signature and superseded by the two modes above.
 
 ### MAVLink / MAVSDK Connection Pipeline
 
@@ -75,7 +75,8 @@ PX4 SITL (instance i)
 
 The port mapping `15000+i` is set in **two places** that must stay in sync:
 1. `~/src/PX4-Autopilot/build/px4_sitl_default/etc/init.d-posix/px4-rc.mavlink` (the live file PX4 reads — NOT the ROMFS source)
-2. `_MAVLINK_BASE = 15000` in `run_commander.py` and `run_skyforge.py`
+2. `MAVLINK_BASE` in `show/config.py` — the single source of truth imported by both `run_commander.py`
+   and `run_skyforge.py` (also `GRPC_BASE`, `GCS_BEACON_MAVLINK`/`GCS_BEACON_GRPC`).
 
 If you change ports, update both. The build file is a plain copy, not a symlink — edit it directly.
 

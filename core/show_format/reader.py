@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import math
+
 import msgpack
 
 from .schema import (
@@ -78,10 +80,37 @@ def _reactive_binding(d: dict) -> ReactiveBinding:
     )
 
 
+# ── Validation ────────────────────────────────────────────────────────────────
+
+def _validate_loaded(show: ShowFile) -> None:
+    """
+    Reject structurally-malformed shows at load time so corruption can't slip
+    through to validation/flight. A NaN/inf polynomial coefficient otherwise sails
+    past validator._check_separation (every `NaN < min_sep` is False) and the show
+    gets stamped 'validated' — then the runtime flies NaN setpoints.
+    """
+    n = show.metadata.n_drones
+    for label, seq in (("drones", show.drones), ("trajectories", show.trajectories),
+                       ("led_tracks", show.led_tracks), ("envelopes", show.envelopes)):
+        if len(seq) != n:
+            raise ValueError(f"malformed show: n_drones={n} but {len(seq)} {label}")
+    if not (math.isfinite(show.metadata.duration_s) and show.metadata.duration_s > 0):
+        raise ValueError(f"malformed show: duration_s={show.metadata.duration_s} must be finite and > 0")
+    for t in show.trajectories:
+        if not (0 <= t.drone_id < n):
+            raise ValueError(f"malformed show: trajectory drone_id {t.drone_id} out of range [0,{n})")
+        for k, seg in enumerate(t.segments):
+            for axis, cs in (("n", seg.coeffs_n), ("e", seg.coeffs_e), ("d", seg.coeffs_d)):
+                if any(not math.isfinite(c) for c in cs):
+                    raise ValueError(
+                        f"malformed show: non-finite coeff in drone {t.drone_id} segment {k} ({axis})"
+                    )
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def _from_dict(d: dict) -> ShowFile:
-    return ShowFile(
+    show = ShowFile(
         metadata          = _metadata(d["metadata"]),
         drones            = [_drone_spec(x)         for x in d["drones"]],
         trajectories      = [_trajectory(x)         for x in d["trajectories"]],
@@ -90,6 +119,8 @@ def _from_dict(d: dict) -> ShowFile:
         reactive_bindings = [_reactive_binding(x)   for x in d["reactive_bindings"]],
         audio_file        = d.get("audio_file"),
     )
+    _validate_loaded(show)
+    return show
 
 
 def from_json(path: str) -> ShowFile:
