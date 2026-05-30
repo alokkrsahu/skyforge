@@ -25,6 +25,12 @@ from show.config import MIN_SEP_M
 # headroom (verified by brute force). The validator's 1.5 m floor stays the limit.
 _PLAN_SCALE_M = MIN_SEP_M + 1.5   # 3.0 m — formation (hold) spacing
 _PLAN_CROSS_M = MIN_SEP_M + 1.0   # 2.5 m — min transition clearance the assignment targets
+# Robust sizing for live formations: scale off the ~20th-percentile nearest-neighbour
+# distance, not the single tightest pair, so a DESIGNED pattern with a few near-touching
+# detail points (e.g. a cat's ears/eyes) isn't ballooned out to a huge radius. The few
+# sub-spacing feature points rely on assign_nocross + APF (the reactive backstop).
+# Uniform patterns (circle/grid) are unaffected (every percentile == the min).
+_PLAN_SPACING_PCT = 20.0
 
 
 _COLOR_NAMES: dict[str, tuple[float, float, float]] = {
@@ -116,7 +122,8 @@ class FleetCommander:
         try:
             # Scale the formation so neighbours clear the planned separation. Without
             # this the raw fixed-radius formations pack sub-metre at scale.
-            offsets = get_formation(spec, rt.n_drones, min_spacing_m=_PLAN_SCALE_M)
+            offsets = get_formation(spec, rt.n_drones, min_spacing_m=_PLAN_SCALE_M,
+                                    spacing_percentile=_PLAN_SPACING_PCT)
         except ValueError as e:
             return f"Error: {e}"
 

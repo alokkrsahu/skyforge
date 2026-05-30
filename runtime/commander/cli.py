@@ -6,7 +6,8 @@ Dispatches to FleetCommander and prints results.
 """
 import asyncio
 
-from .commander import FleetCommander
+from .commander import FleetCommander          # adds the skyforge root to sys.path
+from compiler.formations import list_formations
 
 HELP = """\
 Commands:
@@ -21,6 +22,9 @@ Commands:
   v  / v_shape           — V-shape pointing north
   star                   — 5-point star
   spiral                 — Archimedean spiral
+
+  <any pattern name>     — fly that pattern (see 'formations' for the full list)
+  formations             — list every available pattern (the patterns/ folder)
 
   A–Z                    — spell that letter with drones
   text <STRING>          — spell a word  (e.g.  text HELLO)
@@ -46,9 +50,6 @@ _DIRECTION_MAP = {
     "east":  (0, 1), "west":  (0, -1),
     "n": (1, 0), "s": (-1, 0), "e": (0, 1), "w": (0, -1),
 }
-
-_FORMATION_WORDS = {"circle", "grid", "line", "star", "spiral"}
-
 
 async def _dispatch(line: str, cmd: FleetCommander) -> str | None:
     parts = line.strip().split()
@@ -81,6 +82,10 @@ async def _dispatch(line: str, cmd: FleetCommander) -> str | None:
     if verb == "status":
         return await cmd.status()
 
+    if verb in ("formations", "patterns"):
+        names = list_formations()
+        return f"{len(names)} formations:\n  " + "  ".join(names)
+
     if verb == "text":
         if len(parts) < 2:
             return "Usage: text <STRING>"
@@ -95,7 +100,7 @@ async def _dispatch(line: str, cmd: FleetCommander) -> str | None:
     if len(verb) == 1 and verb.isalpha():
         return await cmd.formation(verb.upper())
 
-    if verb in _FORMATION_WORDS or ":" in verb:
+    if verb in list_formations() or ":" in verb:
         spec = parts[0]
         t    = float(parts[1]) if len(parts) > 1 and "=" not in parts[1] else 6.0
         return await cmd.formation(spec, t)
