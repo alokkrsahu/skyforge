@@ -5,7 +5,11 @@
 # Usage:
 #   ./t5_skyforge.sh                                    — default 4-drone show
 #   ./t5_skyforge.sh ../shows/my_show.skyforge.json     — any show file
+#
+# The arena/world is chosen in t1_sitl.sh; the runtime auto-detects it.
 set -euo pipefail
+
+case "${1:-}" in -h|--help) sed -n '2,9p' "$0"; exit 0;; esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PX4_DIR="$HOME/src/PX4-Autopilot"

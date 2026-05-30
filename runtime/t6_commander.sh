@@ -4,9 +4,13 @@
 #
 # Usage:
 #   ./t6_commander.sh [N]   # default 10 drones
+#
+# The arena/world is chosen in t1_sitl.sh; the runtime auto-detects it.
 
 set -euo pipefail
 export PATH="/opt/homebrew/bin:$PATH"
+
+case "${1:-}" in -h|--help) sed -n '2,7p' "$0"; exit 0;; esac
 
 PX4_DIR="$HOME/src/PX4-Autopilot"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

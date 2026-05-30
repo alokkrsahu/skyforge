@@ -48,6 +48,9 @@ class DroneConn:
     grpc_port:   int
 
 
+_LOCAL_HOSTS = ("localhost", "127.0.0.1")
+
+
 @dataclass(frozen=True)
 class FleetProfile:
     conns:              tuple                # tuple[DroneConn, ...]
@@ -55,6 +58,7 @@ class FleetProfile:
     use_gcs_beacon:     bool
     gcs_beacon_mavlink: int
     gcs_beacon_grpc:    int
+    warnings:           tuple = ()           # config-sanity warnings for the run scripts to print
 
     @property
     def n(self) -> int:
@@ -138,10 +142,48 @@ def load_profile(n: int, fleet_path: Optional[str] = None) -> FleetProfile:
             ))
         conns = tuple(parsed)
 
+    # Sanity: a remote grpc_host can only work if the mavsdk_server is already
+    # running THERE — this code only ever spawns servers locally. So a remote host
+    # with spawn_local_server=True is a misconfig (server spawns on localhost while
+    # the System connects to the remote host). Warn; don't block (the user may route).
+    warnings = []
+    if spawn_local_server:
+        remote = sorted({c.grpc_host for c in conns if c.grpc_host not in _LOCAL_HOSTS})
+        if remote:
+            warnings.append(
+                f"grpc_host {', '.join(remote)} is remote but spawn_local_server=true — "
+                f"the local mavsdk_server can't reach a remote board. Set "
+                f"spawn_local_server:false and pre-start mavsdk_server on that host.")
+
     return FleetProfile(
         conns=conns,
         spawn_local_server=spawn_local_server,
         use_gcs_beacon=use_gcs_beacon,
         gcs_beacon_mavlink=config.GCS_BEACON_MAVLINK,
         gcs_beacon_grpc=config.GCS_BEACON_GRPC,
+        warnings=tuple(warnings),
     )
+
+
+# ── Fleet-size reconciliation (pure; the run scripts print the message) ──────────
+
+def reconcile_commander_fleet_size(profile: FleetProfile, requested_n: int):
+    """Commander: a fleet file's drone list is the source of truth, so adopt its
+    count. Returns (effective_n, message_or_None)."""
+    if profile.n != requested_n:
+        return profile.n, (f"fleet file overrides drone count: {requested_n} → {profile.n}")
+    return requested_n, None
+
+
+def validate_show_fleet_size(profile: FleetProfile, show_n: int):
+    """Show player: the SHOW dictates the count, so the fleet must supply at least
+    that many drones. Returns (ok, message_or_None): ok=False aborts (too few);
+    ok=True with a message warns (more than needed); ok=True/None is an exact match."""
+    if profile.n < show_n:
+        return False, (f"$SKYFORGE_FLEET lists {profile.n} drones but the show needs "
+                       f"{show_n}. Aborting (won't fly a {show_n}-drone show on "
+                       f"{profile.n} drones).")
+    if profile.n > show_n:
+        return True, (f"fleet file lists {profile.n} drones; using the first {show_n} "
+                      f"for this {show_n}-drone show.")
+    return True, None

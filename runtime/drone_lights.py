@@ -24,8 +24,12 @@ Examples:
   python3 drone_lights.py all brightness 0.3
   python3 drone_lights.py 2 on
 """
+import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from show.gz_world import resolve_gz_world
 
 # Each (front/rear) point light on the arm tips
 ARM_LIGHTS = [
@@ -53,9 +57,19 @@ SPOT_DEFAULTS  = ("range: 15.0 attenuation_constant: 0.3 attenuation_linear: 0.0
                   "attenuation_quadratic: 0.001 spot_inner_angle: 0.3 spot_outer_angle: 0.8 spot_falloff: 1.0")
 
 
+_WORLD = None   # resolved gz world name, cached on first publish (not at import)
+
+
+def _light_topic() -> str:
+    global _WORLD
+    if _WORLD is None:
+        _WORLD = resolve_gz_world()
+    return f"/world/{_WORLD}/light_config"
+
+
 def _publish(proto: str):
     result = subprocess.run(
-        ["gz", "topic", "-t", "/world/default/light_config",
+        ["gz", "topic", "-t", _light_topic(),
          "-m", "gz.msgs.Light", "-p", proto],
         capture_output=True, text=True
     )

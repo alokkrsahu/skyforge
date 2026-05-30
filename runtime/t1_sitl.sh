@@ -2,10 +2,11 @@
 # Terminal 1 — PX4 SITL x N + Gazebo physics server
 #
 # Usage:
-#   ./t1_sitl.sh       — default 4 drones
-#   ./t1_sitl.sh 10    — 10 drones (recommended for 14-core Mac)
-#   ./t1_sitl.sh 16    — 16 drones (may lag; monitor Gazebo frame rate)
+#   ./t1_sitl.sh [N] [arena]      (run with -h to list available arenas)
+#   ./t1_sitl.sh 10               — 10 drones, default arena
+#   ./t1_sitl.sh 8 walls          — 8 drones in the 'walls' world
 #
+# Only t1 takes the arena; t2 and the runtime auto-detect the running world.
 # Logs: /tmp/px4_sitl_0.log .. /tmp/px4_sitl_N-1.log
 
 export PATH="/opt/homebrew/bin:$PATH"
@@ -13,10 +14,55 @@ PX4_DIR="$HOME/src/PX4-Autopilot"
 WORKDIR="$PX4_DIR/build/px4_sitl_default/rootfs"
 PX4_BIN="$PX4_DIR/build/px4_sitl_default/bin/px4"
 
-N="${1:-4}"   # number of drones (default 4)
+N="${1:-4}"            # number of drones (default 4)
+arena="${2:-default}"  # Gazebo world / arena (default: the deployed forest world)
+PX4_GZ_WORLDS="${PX4_GZ_WORLDS:-$PX4_DIR/Tools/simulation/gz/worlds}"
+
+usage() {
+    echo "Usage: ./t1_sitl.sh [N] [arena]"
+    echo "  N      number of drones (default 4)"
+    echo "  arena  Gazebo world to load (default 'default'). Available:"
+    for _w in "$PX4_GZ_WORLDS"/*.sdf; do
+        [ -e "$_w" ] || continue
+        _name="$(basename "$_w" .sdf)"
+        case "$_name" in
+            default) _note="DART 100Hz, forest scenery (recommended)";;
+            *)       _note="ODE physics — large fleets (>~40) may crash";;
+        esac
+        case "$_name" in
+            default|forest|baylands|underwater) _note="$_note; Fuel assets download on first run";;
+        esac
+        printf "           %-16s %s\n" "$_name" "$_note"
+    done
+    echo "  -h, --help   show this help"
+    echo
+    echo "Only t1 takes the arena; t2 + the runtime auto-detect the running world."
+}
+
+# Help BEFORE the destructive kill block below, so -h never tears down a stack.
+for _a in "$1" "$2"; do
+    case "$_a" in -h|--help) usage; exit 0;; esac
+done
+
+if [ ! -f "$PX4_GZ_WORLDS/$arena.sdf" ]; then
+    echo "ERROR: arena '$arena' not found ($PX4_GZ_WORLDS/$arena.sdf)."
+    echo
+    usage
+    exit 1
+fi
+export PX4_GZ_WORLD="$arena"
+
+# Warn (never block) on the chosen arena's caveats.
+if [ "$arena" != "default" ] && [ "$N" -gt 40 ]; then
+    echo "[t1] WARNING: '$arena' uses ODE physics; >~40 drones may hit the ODE overflow crash. Proceeding."
+fi
+case "$arena" in
+    forest|baylands|underwater)
+        echo "[t1] NOTE: arena '$arena' pulls Fuel models (downloads on first run; needs internet).";;
+esac
 
 echo "========================================="
-echo " PX4 SITL x${N} + Gazebo Server"
+echo " PX4 SITL x${N} + Gazebo Server  (arena: ${arena})"
 echo " Logs: /tmp/px4_sitl_0.log .. _$((N-1)).log"
 echo "========================================="
 
@@ -77,6 +123,13 @@ for _ in $(seq 1 120); do
 done
 sleep 1   # small cushion for gz_bridge to come up
 
+# Detect the running INNER world name (the gz namespace == the SDF's <world name>,
+# which is NOT always the arena filename — frictionless.sdf and our default.sdf are
+# inner-named "default"). Used for the model-remove in the restart helper below.
+GZ_WORLD="$(GZ_IP=127.0.0.1 gz topic -l 2>/dev/null | grep -m1 -e '^/world/.*/clock' | sed 's#/world/##; s#/clock##')"
+[ -z "$GZ_WORLD" ] && GZ_WORLD="$arena"
+echo "[t1] Gazebo world: $GZ_WORLD"
+
 # ── Remaining instances — small stagger avoids Gazebo spawn contention ────────
 # Parallel model-spawn requests can make rcS fail (return value 2); 0.5 s is
 # enough to serialise spawns while the launches still overlap. 4 s was overkill.
@@ -110,7 +163,7 @@ start_instance() {
     # A hung instance may have already spawned its Gazebo model; remove it so the
     # relaunched instance can re-spawn. Otherwise gz_bridge fails with the model
     # already present ("Task already running" → rcS return value 256). Best-effort.
-    GZ_IP=127.0.0.1 gz service -s /world/default/remove \
+    GZ_IP=127.0.0.1 gz service -s "/world/$GZ_WORLD/remove" \
         --reqtype gz.msgs.Entity --reptype gz.msgs.Boolean --timeout 2000 \
         --req "name: \"x500_$i\" type: MODEL" >/dev/null 2>&1 || true
     sleep 0.5

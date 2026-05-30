@@ -31,7 +31,7 @@ from mavsdk import System
 
 from core.show_format.reader import from_json, from_msgpack
 from show.config import MIN_SEP_M, APF_MIN_SEP_M
-from show.connection import load_profile, FleetProfile
+from show.connection import load_profile, FleetProfile, validate_show_fleet_size
 from show.skyforge_adapter import (
     SkyforgeRuntime, run_drone_skyforge, telemetry_consumer,
 )
@@ -59,6 +59,8 @@ async def _respawn_server(i: int, profile: FleetProfile) -> None:
     gRPC port + MAVLink endpoint; the System channel auto-reconnects. When the
     profile doesn't own the servers, just wait for the channel to reconnect."""
     if not profile.spawn_local_server:
+        print(f"[run_skyforge] Drone {i}: server externally managed — waiting for gRPC "
+              f"reconnect (if it's down, restart mavsdk_server on its host).")
         await asyncio.sleep(3.0)
         return
     kill = await asyncio.create_subprocess_exec(
@@ -71,6 +73,68 @@ async def _respawn_server(i: int, profile: FleetProfile) -> None:
     await asyncio.sleep(3.0)   # let the new server complete its MAVLink handshake
 
 DEFAULT_SHOW = os.path.join(_SKYFORGE_DIR, "shows/four_drone_demo.skyforge.json")
+
+
+async def _connect_fleet(n: int, profile: FleetProfile, runtime):
+    """Spawn the GCS beacon (if enabled) + one mavsdk_server per drone (if owned
+    locally), open gRPC channels with respawn-retry, set ready_target, and return
+    the list of (original_id, System) that came up. Extracted from main() so the
+    beacon/spawn/connect wiring is integration-testable with a stubbed System."""
+    # GCS beacon: PX4 SITL hard-codes remote=14550 for ALL instances and denies arm
+    # ("No connection to GCS") without it. Real PX4 supplies its own; a fleet file
+    # can disable this (use_gcs_beacon: false).
+    if profile.use_gcs_beacon:
+        print(f"[run_skyforge] Spawning GCS beacon on port {profile.gcs_beacon_mavlink}...")
+        await asyncio.create_subprocess_exec(
+            _MAVSDK_SERVER_BIN, "-p", str(profile.gcs_beacon_grpc),
+            f"udpin://0.0.0.0:{profile.gcs_beacon_mavlink}",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.sleep(0.5)
+    else:
+        print("[run_skyforge] GCS beacon disabled (real PX4 supplies its own GCS heartbeat).")
+
+    print(f"[run_skyforge] Spawning {n} MAVSDK servers (staggered)...")
+    async def _spawn(i: int) -> None:
+        await asyncio.sleep(i * 0.2)   # let the OS bind each UDP/gRPC port in turn
+        await _spawn_server(i, profile)
+    await asyncio.gather(*[_spawn(i) for i in range(n)])
+    await asyncio.sleep(3.0)   # final settle — last server needs its MAVLink handshake
+
+    # ── Open gRPC channels; tolerate per-drone failure, respawn & retry ───────
+    async def _connect(i: int) -> System:
+        await asyncio.sleep(i * 0.15)
+        conn = profile.conn(i)
+        for attempt in range(3):
+            drone = System(mavsdk_server_address=conn.grpc_host, port=conn.grpc_port)
+            print(f"[run_skyforge] Connecting drone {i} on {conn.mavlink_url} ...")
+            await drone.connect()
+            try:
+                await wait_healthy(drone, i)
+                try:
+                    await drone.telemetry.set_rate_position_velocity_ned(10.0)
+                except Exception:
+                    pass
+                return drone
+            except Exception:
+                if attempt < 2:
+                    print(f"[run_skyforge] Drone {i}: crash (attempt {attempt+1}), respawning...")
+                    await _respawn_server(i, profile)
+                else:
+                    raise
+        raise RuntimeError(f"Drone {i} unreachable")
+
+    print(f"[run_skyforge] Opening gRPC channels to {n} servers...")
+    raw = await asyncio.gather(*[_connect(i) for i in range(n)], return_exceptions=True)
+    # Keep (original_id, drone) pairs so trajectory/LED/envelope indexing by
+    # drone_id stays correct even when some drones fail to come up.
+    active = [(i, r) for i, r in enumerate(raw) if not isinstance(r, Exception)]
+    for i, r in enumerate(raw):
+        if isinstance(r, Exception):
+            print(f"[run_skyforge] Drone {i}: FAILED to connect ({r}), skipping")
+    runtime.ready_target = len(active)   # sync target = drones actually flying
+    print(f"\n[run_skyforge] {len(active)}/{n} drones connected.")
+    return active
 
 
 def load_show(path: str):
@@ -137,74 +201,19 @@ async def main(show_path: str, allow_unvalidated: bool = False):
     # supply at least that many drones — fail loud rather than fly a choreographed
     # show on fewer airframes than it was planned for.
     profile = load_profile(n)
-    if profile.n < n:
-        print(f"ERROR: $SKYFORGE_FLEET lists {profile.n} drones but the show needs {n}. "
-              f"Aborting (won't fly a {n}-drone show on {profile.n} drones).")
+    for w in profile.warnings:
+        print(f"[run_skyforge] WARNING: {w}")
+    ok, msg = validate_show_fleet_size(profile, n)
+    if msg:
+        print(("ERROR: " if not ok else "[run_skyforge] ") + msg)
+    if not ok:
         return
-    if profile.n > n:
-        print(f"[run_skyforge] fleet file lists {profile.n} drones; using the first {n} "
-              f"for this {n}-drone show.")
 
-    # ── GCS beacon ────────────────────────────────────────────────────────────
-    # PX4 SITL's GCS link hard-codes remote=14550 for ALL instances; without
-    # something listening there it denies arm ("No connection to GCS"). One beacon
-    # serves the whole fleet. Real PX4 supplies its own GCS heartbeat, so a fleet
-    # file can disable this (use_gcs_beacon: false).
-    if profile.use_gcs_beacon:
-        print(f"[run_skyforge] Spawning GCS beacon on port {profile.gcs_beacon_mavlink}...")
-        await asyncio.create_subprocess_exec(
-            _MAVSDK_SERVER_BIN, "-p", str(profile.gcs_beacon_grpc),
-            f"udpin://0.0.0.0:{profile.gcs_beacon_mavlink}",
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.sleep(0.5)
-    else:
-        print("[run_skyforge] GCS beacon disabled (real PX4 supplies its own GCS heartbeat).")
-
-    # ── Pre-spawn one MAVSDK server per drone (staggered) ─────────────────────
-    print(f"[run_skyforge] Spawning {n} MAVSDK servers (staggered)...")
-    async def _spawn(i: int) -> None:
-        await asyncio.sleep(i * 0.2)   # let the OS bind each UDP/gRPC port in turn
-        await _spawn_server(i, profile)
-    await asyncio.gather(*[_spawn(i) for i in range(n)])
-    await asyncio.sleep(3.0)   # final settle — last server needs its MAVLink handshake
-
-    # ── Open gRPC channels; tolerate per-drone failure, respawn & retry ───────
-    async def _connect(i: int) -> System:
-        await asyncio.sleep(i * 0.15)
-        conn = profile.conn(i)
-        for attempt in range(3):
-            drone = System(mavsdk_server_address=conn.grpc_host, port=conn.grpc_port)
-            print(f"[run_skyforge] Connecting drone {i} on {conn.mavlink_url} ...")
-            await drone.connect()
-            try:
-                await wait_healthy(drone, i)
-                try:
-                    await drone.telemetry.set_rate_position_velocity_ned(10.0)
-                except Exception:
-                    pass
-                return drone
-            except Exception:
-                if attempt < 2:
-                    print(f"[run_skyforge] Drone {i}: crash (attempt {attempt+1}), respawning...")
-                    await _respawn_server(i, profile)
-                else:
-                    raise
-        raise RuntimeError(f"Drone {i} unreachable")
-
-    print(f"[run_skyforge] Opening gRPC channels to {n} servers...")
-    raw = await asyncio.gather(*[_connect(i) for i in range(n)], return_exceptions=True)
-    # Keep (original_id, drone) pairs so trajectory/LED/envelope indexing by
-    # drone_id stays correct even when some drones fail to come up.
-    active = [(i, r) for i, r in enumerate(raw) if not isinstance(r, Exception)]
-    for i, r in enumerate(raw):
-        if isinstance(r, Exception):
-            print(f"[run_skyforge] Drone {i}: FAILED to connect ({r}), skipping")
+    active = await _connect_fleet(n, profile, runtime)
     if not active:
         print("[run_skyforge] No drones connected — aborting.")
         return
-    runtime.ready_target = len(active)   # sync target = drones actually flying
-    print(f"\n[run_skyforge] {len(active)}/{n} drones connected. Starting in 2 s...\n")
+    print(f"\n[run_skyforge] Starting in 2 s...\n")
     await asyncio.sleep(2.0)
 
     # ── Shared synchronisation state ─────────────────────────────────────────

@@ -30,15 +30,17 @@ echo "========================================="
 echo "[t2] Checking Gazebo server is ready..."
 ATTEMPTS=20
 while [ $ATTEMPTS -gt 0 ]; do
-    if GZ_IP=127.0.0.1 gz topic -l 2>/dev/null | grep -q "/world/default/clock"; then
-        echo "[t2] Server found. Opening Gazebo window..."
+    # Match ANY world (arena-agnostic) — the GUI attaches to whatever t1 launched.
+    if GZ_IP=127.0.0.1 gz topic -l 2>/dev/null | grep -qE "^/world/.+/clock"; then
+        _world="$(GZ_IP=127.0.0.1 gz topic -l 2>/dev/null | grep -m1 -E '^/world/.+/clock' | sed 's#/world/##; s#/clock##')"
+        echo "[t2] Server found (world: ${_world:-?}). Opening Gazebo window..."
         break
     fi
     ATTEMPTS=$((ATTEMPTS-1))
     if [ $ATTEMPTS -eq 0 ]; then
         echo "ERROR: Gazebo server not found."
         echo "       Make sure t1_sitl.sh is running and has reached:"
-        echo "       INFO [gz_bridge] world: default, model: x500_0"
+        echo "       INFO [gz_bridge] world: <arena>, model: x500_0"
         exit 1
     fi
     echo "[t2] Waiting for server... ($ATTEMPTS attempts left)"

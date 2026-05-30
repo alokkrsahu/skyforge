@@ -65,6 +65,14 @@ historical SITL configuration (byte-for-byte).
   `run_skyforge` **fails loud** if the file lists *fewer* drones than the compiled show needs (it
   will not fly a choreographed show on fewer airframes).
 
+> ⚠️ **Remote `grpc_host` requires `spawn_local_server: false`.** This code only ever spawns
+> `mavsdk_server` *locally*. If you point a drone at a remote `grpc_host` (a companion board) you
+> **must** set `spawn_local_server: false` and pre-start `mavsdk_server` on that host — otherwise the
+> local machine spawns a server while the `System` connects to the remote host (mismatch). The
+> runtime **warns** at startup if it detects a remote `grpc_host` with `spawn_local_server: true`.
+> Also: when `spawn_local_server: false`, a *dead* remote server can't be restarted from here — the
+> retry loop only waits for it to reappear, so monitor/restart it externally.
+
 **Flags-only file** (no `drones`) keeps SITL ports/URLs and just flips flags — handy for HITL:
 
 ```json

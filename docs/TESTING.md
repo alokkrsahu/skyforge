@@ -1,0 +1,87 @@
+# Testing Skyforge
+
+Two layers: **automated** (hermetic — no PX4/Gazebo/hardware) and **manual** (you run the SITL
+stack / hardware). The automated suite is the regression gate; the manual procedures cover what
+can't be unit-tested (real Gazebo rendering, PX4 arming, the load-dependent arm race, hardware).
+
+## Automated (run anytime)
+
+```bash
+source ~/src/PX4-Autopilot/.venv/bin/activate
+pytest -q                       # full suite (compiler + runtime + deployment)
+bash -n runtime/t1_sitl.sh runtime/t2_gazebo_gui.sh runtime/t5_skyforge.sh runtime/t6_commander.sh
+```
+
+What it covers: the connection profile (`load_profile`, flags, overrides, fleet-size helpers,
+remote-host warning), the LED backend factory + Gazebo path + stub, the gz-world resolver
+(env/fallback/cache/regex), the commander arm crash-hardening (`_ensure_ready` + respawn-retry),
+telemetry-consumer recovery, and the run-script **connect phase** (`_connect_fleet`) — beacon
+spawned iff `use_gcs_beacon`, N local spawns iff `spawn_local_server`, `System` built from
+`conn.grpc_host`/`grpc_port` — all with a stubbed MAVSDK + recorded (not spawned) subprocesses.
+
+Script help/validation (no stack, no teardown):
+```bash
+./t1_sitl.sh -h            # lists arenas + caveats, exit 0
+./t1_sitl.sh 4 nosuchworld # errors + lists + exit 1
+```
+
+## Manual — SITL (you run the 3-terminal stack)
+
+### 1. Regression (default arena, no env) — must behave exactly as before
+```bash
+./t1_sitl.sh 4      # T1
+./t2_gazebo_gui.sh  # T2
+./t6_commander.sh 4 # T3 → takeoff ; set_color red ; circle ; land
+```
+Expect: forest world renders; GCS beacon spawned; LEDs recolor; kill a PX4 instance and confirm the
+restart helper logs `/world/default/remove`. This is the byte-for-byte-default check.
+
+### 2. Arena matrix
+```bash
+./t1_sitl.sh 4 walls        # log shows "world: walls"; t2 attaches; LEDs recolor; restart remove works
+./t1_sitl.sh 4 windy        # wind world
+./t1_sitl.sh 4 frictionless # inner-name MISMATCH (filename frictionless, world name "default") —
+                            #   confirms auto-detect uses the inner name; LEDs + remove still work
+./t1_sitl.sh 4 forest       # stock forest — expect the Fuel-download note + collision-tree caveat
+```
+For each: `t6` → `set_color`/`takeoff` recolors LEDs (proves the resolver built `/world/<inner>/…`).
+
+### 3. Arm-hardening (opportunistic — load-dependent)
+```bash
+./t1_sitl.sh 16 ; ./t2_gazebo_gui.sh ; ./t6_commander.sh 16 → takeoff
+```
+Watch for `link down pre-arm — respawning` or `arm/takeoff failed (attempt N)` **followed by a
+successful arm** rather than a dead fleet. The mavsdk_server abort race is load-dependent — it may
+not trigger on a given run; that's fine, the unit tests pin the recovery logic.
+
+## Manual — HITL proxy on SITL (verifies the deployment paths without a board)
+
+Create `fleet_proxy.json` (SITL ports, but exercising the flags):
+```json
+{ "use_gcs_beacon": false,
+  "drones": [ { "mavlink_url": "udpin://0.0.0.0:15000" },
+              { "mavlink_url": "udpin://0.0.0.0:15001" } ] }
+```
+```bash
+export SKYFORGE_FLEET=$PWD/fleet_proxy.json
+export SKYFORGE_LED_BACKEND=stub
+./t1_sitl.sh 2 ; ./t6_commander.sh 2
+```
+Expect: **"GCS beacon disabled"** printed; `[led] …=stub — LED commands are no-ops`; **no** `gz
+service` procs (`pgrep -f 'gz service'` empty). With `use_gcs_beacon:false`, PX4 SITL will **deny
+arm** ("No connection to GCS") — *this proves the flag is honored*. To fly the full path in SITL,
+either drop the flag (beacon on) or start one manually:
+`mavsdk_server -p 50050 udpin://0.0.0.0:14550 &`.
+
+`spawn_local_server:false` variant: pre-start the per-drone servers yourself
+(`mavsdk_server -p 50051 udpin://0.0.0.0:15000 &`, etc.), set the flag, and confirm the runtime
+connects **without** spawning new servers (process count unchanged).
+
+## Manual — real hardware (deferred; needs a board)
+
+Follow `docs/HITL.md` then `docs/HARDWARE.md`. Order: real MAVLink link (`serial://`/`udp://`) →
+single-drone `_wait_healthy` (real GPS+home) → arm/takeoff/land → scale up. Remember:
+- **Remote `grpc_host` ⇒ `spawn_local_server: false`** + pre-start `mavsdk_server` on that host.
+- **Geodetic origin is unimplemented** — real *outdoor multi-drone* needs a common datum (RTK) +
+  per-drone home reconciliation; indoor/known-origin swarms are unaffected (see HARDWARE.md "Gaps").
+- Configure PX4-side failsafes (geofence/RTL/battery/RC-loss) on the vehicle — Skyforge doesn't.

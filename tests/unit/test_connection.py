@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../runtime"))
 from show import config
 from show.connection import (
     load_profile, sitl_default_conn, SKYFORGE_FLEET_ENV,
+    reconcile_commander_fleet_size, validate_show_fleet_size,
 )
 
 
@@ -169,3 +170,70 @@ def test_drone_without_mavlink_url_raises():
         _expect_valueerror(path)
     finally:
         os.unlink(path)
+
+
+# ── Remote-host footgun warning ───────────────────────────────────────────────
+
+def test_remote_grpc_host_warns_when_spawn_local():
+    """A remote grpc_host with spawn_local_server=true (default) can't work — the
+    local server spawns on localhost while the System connects to the remote host."""
+    path = _fleet_file({"drones": [
+        {"mavlink_url": "udp://10.0.0.5:14550", "grpc_host": "10.0.0.5"}]})
+    try:
+        prof = load_profile(1, path)
+        assert any("remote" in w for w in prof.warnings)
+    finally:
+        os.unlink(path)
+
+
+def test_default_has_no_warnings():
+    assert load_profile(4, None).warnings == ()
+
+
+def test_remote_host_with_spawn_false_no_warning():
+    path = _fleet_file({"spawn_local_server": False, "drones": [
+        {"mavlink_url": "udp://10.0.0.5:14550", "grpc_host": "10.0.0.5"}]})
+    try:
+        assert load_profile(1, path).warnings == ()   # externally managed → fine
+    finally:
+        os.unlink(path)
+
+
+# ── Fleet-size reconciliation helpers ─────────────────────────────────────────
+
+def test_reconcile_commander_adopts_profile_count():
+    path = _fleet_file({"drones": [{"mavlink_url": f"udp://h:{i}"} for i in range(3)]})
+    try:
+        prof = load_profile(1, path)
+        n, msg = reconcile_commander_fleet_size(prof, 1)
+        assert n == 3 and msg is not None
+    finally:
+        os.unlink(path)
+
+
+def test_reconcile_commander_no_change_when_equal():
+    n, msg = reconcile_commander_fleet_size(load_profile(4, None), 4)
+    assert n == 4 and msg is None
+
+
+def test_validate_show_fails_loud_when_too_few():
+    path = _fleet_file({"drones": [{"mavlink_url": "udp://h:1"}]})   # 1 drone
+    try:
+        ok, msg = validate_show_fleet_size(load_profile(1, path), 4)   # show needs 4
+        assert ok is False and "Aborting" in msg
+    finally:
+        os.unlink(path)
+
+
+def test_validate_show_warns_when_more():
+    path = _fleet_file({"drones": [{"mavlink_url": f"udp://h:{i}"} for i in range(6)]})
+    try:
+        ok, msg = validate_show_fleet_size(load_profile(1, path), 4)
+        assert ok is True and msg is not None
+    finally:
+        os.unlink(path)
+
+
+def test_validate_show_exact_no_message():
+    ok, msg = validate_show_fleet_size(load_profile(4, None), 4)
+    assert ok is True and msg is None

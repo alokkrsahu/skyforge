@@ -60,10 +60,15 @@ clears the planned separation.
 
 ```bash
 ./t1_sitl.sh 16            # Terminal 1 — PX4 SITL ×16 + Gazebo (headless)
+./t1_sitl.sh 16 walls      #   …or pick an arena (./t1_sitl.sh -h lists them)
 ./t2_gazebo_gui.sh         # Terminal 2 — 3D view
 ./t5_skyforge.sh ../shows/my_show.skyforge.json   # Terminal 3 — fly the compiled show
 # or:  ./t6_commander.sh 16                        #            — live interactive REPL
 ```
+
+Only `t1` takes the arena (it sets `PX4_GZ_WORLD`); `t2` and the runtime auto-detect the running
+world. The `default` arena is the forest stage (DART, 100+ drones); stock worlds are ODE and warn
+above ~40 drones.
 
 The runtime **refuses to fly a show that isn't `validated`** (pass `--allow-unvalidated` to
 `run_skyforge.py` to override). See `runtime/CLAUDE.md` for the MAVSDK/port wiring and operational
@@ -91,7 +96,10 @@ pytest -q
 ```
 
 Covers the compiler (formations, assignment, deconfliction, envelopes, validation, schema
-round-trip + malformed-input) and the runtime telemetry/APF logic (async tests stub MAVSDK).
+round-trip + malformed-input) and the runtime logic (telemetry/APF, the connection profile, LED
+backend, gz-world resolver, arm crash-hardening, and the run-script connect phase — async tests
+stub MAVSDK). The full strategy — including the manual SITL / HITL-proxy / hardware procedures — is
+in **[docs/TESTING.md](docs/TESTING.md)**.
 
 ## Layout
 

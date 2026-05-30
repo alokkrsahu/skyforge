@@ -31,7 +31,7 @@ from commander.dynamic_adapter import (
 )
 from commander.commander import FleetCommander
 from commander.cli import cli_loop
-from show.connection import load_profile, FleetProfile
+from show.connection import load_profile, FleetProfile, reconcile_commander_fleet_size
 _MAVSDK_SERVER_BIN = os.path.join(
     os.path.dirname(_mavsdk_mod.__file__), "bin", "mavsdk_server"
 )
@@ -59,6 +59,8 @@ async def _respawn_server(i: int, profile: FleetProfile) -> None:
     under load). When the profile doesn't own the servers, just wait for the
     existing System's gRPC channel to auto-reconnect."""
     if not profile.spawn_local_server:
+        print(f"[run_commander] Drone {i}: server externally managed — waiting for gRPC "
+              f"reconnect (if it's down, restart mavsdk_server on its host).")
         await asyncio.sleep(3.0)
         return
     kill = await asyncio.create_subprocess_exec(
@@ -86,38 +88,14 @@ async def _wait_healthy(drone: System, drone_id: int, timeout: float = 60.0) -> 
     # gRPC exceptions propagate to _connect so it can respawn and retry
 
 
-async def main(n: int) -> None:
-    # Resolve the deployment profile (SITL default, or a $SKYFORGE_FLEET file for
-    # HITL/hardware). A fleet file with an explicit drone list is the source of
-    # truth for the count, so adopt it.
-    profile = load_profile(n)
-    if profile.n != n:
-        print(f"[run_commander] fleet file overrides drone count: {n} → {profile.n}")
-        n = profile.n
-
-    print("=" * 55)
-    print("  Drone Commander — Live Interactive Mode")
-    print(f"  Fleet: {n} drones")
-    print("=" * 55)
-
-    cols          = math.ceil(math.sqrt(n))
-    home_ned_list = [(2.0 * (i // cols), 2.0 * (i % cols)) for i in range(n)]
-
-    runtime     = DynamicRuntime(n_drones=n, home_ned_list=home_ned_list)
-    abort_event = asyncio.Event()
-
-    # ── Pre-spawn all mavsdk_server processes concurrently (truly async) ──────
-    # Bypasses MAVSDK's internal blocking subprocess.Popen so all 25 start
-    # simultaneously instead of one-by-one (saves ~20-40 s on large fleets).
-    # Pre-spawn each server WITH its connection URL so it connects to PX4
-    # immediately — Python then just opens the gRPC channel (fast, non-blocking).
-    # Stagger spawn 200 ms apart so OS can bind each UDP socket + gRPC port
-    # before the next one opens.  25 drones ≈ 5 s total spawn time, then we
-    # wait another 3 s for the last servers to complete their MAVLink handshake.
-    # GCS beacon: PX4's "Normal" GCS link hard-codes remote=14550 for ALL instances.
-    # Without something listening there, PX4 refuses to arm ("No connection to GCS").
-    # One server on 14550 receives heartbeats from every PX4 instance and replies,
-    # satisfying the GCS-connected check for the whole fleet.
+async def _connect_fleet(n: int, profile: FleetProfile, runtime: DynamicRuntime):
+    """Spawn the GCS beacon (if enabled) + one mavsdk_server per drone (if owned
+    locally), open gRPC channels with respawn-retry, and return the list of
+    (original_id, System) that came up. Extracted from main() so the beacon/spawn/
+    connect wiring is integration-testable with a stubbed System + recorded spawns."""
+    # GCS beacon: PX4 SITL hard-codes remote=14550 for ALL instances and refuses to
+    # arm ("No connection to GCS") without something listening there. Real PX4
+    # supplies its own GCS heartbeat, so a fleet file can disable this.
     if profile.use_gcs_beacon:
         print(f"[run_commander] Spawning GCS beacon on port {profile.gcs_beacon_mavlink}...")
         await asyncio.create_subprocess_exec(
@@ -138,8 +116,7 @@ async def main(n: int) -> None:
     await asyncio.gather(*[_spawn(i) for i in range(n)])
     await asyncio.sleep(3.0)   # final settle — last server needs its MAVLink handshake
 
-    # ── Open gRPC channels to already-connected servers ────────────────────────
-    # If a server crashed (gRPC error), kill it, respawn, and retry once.
+    # ── Open gRPC channels; if a server crashed, respawn and retry ──────────────
     async def _connect(i: int) -> System:
         await asyncio.sleep(i * 0.15)   # 150 ms stagger — avoids gRPC subscription burst
         conn = profile.conn(i)
@@ -170,6 +147,32 @@ async def main(n: int) -> None:
             print(f"[run_commander] Drone {i}: FAILED to connect ({r}), skipping")
     runtime.ready_target = len(active)   # actual target — may be < original n
     print(f"\n[run_commander] {len(active)}/{n} drones connected.\n")
+    return active
+
+
+async def main(n: int) -> None:
+    # Resolve the deployment profile (SITL default, or a $SKYFORGE_FLEET file for
+    # HITL/hardware). A fleet file with an explicit drone list is the source of
+    # truth for the count, so adopt it.
+    profile = load_profile(n)
+    for w in profile.warnings:
+        print(f"[run_commander] WARNING: {w}")
+    n, msg = reconcile_commander_fleet_size(profile, n)
+    if msg:
+        print(f"[run_commander] {msg}")
+
+    print("=" * 55)
+    print("  Drone Commander — Live Interactive Mode")
+    print(f"  Fleet: {n} drones")
+    print("=" * 55)
+
+    cols          = math.ceil(math.sqrt(n))
+    home_ned_list = [(2.0 * (i // cols), 2.0 * (i % cols)) for i in range(n)]
+
+    runtime     = DynamicRuntime(n_drones=n, home_ned_list=home_ned_list)
+    abort_event = asyncio.Event()
+
+    active = await _connect_fleet(n, profile, runtime)
 
     commander = FleetCommander(runtime)
 

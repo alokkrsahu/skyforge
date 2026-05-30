@@ -21,6 +21,8 @@ processes), starving the event loop and dropping the offboard setpoint stream.
 import asyncio
 import os
 
+from .gz_world import resolve_gz_world
+
 LED_BACKEND_ENV = "SKYFORGE_LED_BACKEND"
 
 
@@ -40,6 +42,7 @@ class _GazeboLed(LedBackend):
 
     def __init__(self) -> None:
         self._sem: "asyncio.Semaphore | None" = None
+        self._world: "str | None" = None
         # gz transport needs GZ_IP set to reach the sim's partition; without it the
         # service call silently times out (no LED change).
         self._env = {**os.environ, "GZ_IP": "127.0.0.1"}
@@ -49,15 +52,23 @@ class _GazeboLed(LedBackend):
             self._sem = asyncio.Semaphore(self._GZ_MAX_CONCURRENT)
         return self._sem
 
+    def _svc(self, kind: str) -> str:
+        """Build the gz service path for the running arena. Resolved lazily on the
+        first call (never at import) and cached — one resolve per fleet-wide
+        singleton. kind = "visual_config" | "light_config"."""
+        if self._world is None:
+            self._world = resolve_gz_world()
+        return f"/world/{self._world}/{kind}"
+
 
 class GazeboVisualLed(_GazeboLed):
     """SITL player: recolor the emissive motor-base meshes via visual_config."""
-    _SVC     = "/world/default/visual_config"
     _VISUALS = ["5010_motor_base_0", "5010_motor_base_1",
                 "5010_motor_base_2", "5010_motor_base_3"]
 
     async def set_led(self, drone_id: int, r: float, g: float, b: float) -> None:
         model = f"x500_{drone_id}"
+        svc   = self._svc("visual_config")
         mat   = (
             f"material {{"
             f"ambient {{r:{r:.3f} g:{g:.3f} b:{b:.3f} a:1}} "
@@ -71,7 +82,7 @@ class GazeboVisualLed(_GazeboLed):
             proto = f'name: "{model}::base_link::{vis}" {mat}'
             async with sem:
                 proc  = await asyncio.create_subprocess_exec(
-                    "gz", "service", "-s", self._SVC,
+                    "gz", "service", "-s", svc,
                     "--reqtype", "gz.msgs.Visual",
                     "--reptype", "gz.msgs.Boolean",
                     "--timeout", "200",
@@ -91,7 +102,6 @@ class GazeboPointLightLed(_GazeboLed):
     since light_config replaces the whole light (model.sdf: pose x y 0.05,
     attenuation range 5 / 0.3 / 0.2 / 0.01).
     """
-    _SVC    = "/world/default/light_config"
     _LIGHTS = {
         "light_front_left":  (0.174, 0.174, 0.05),
         "light_front_right": (0.174, -0.174, 0.05),
@@ -101,6 +111,7 @@ class GazeboPointLightLed(_GazeboLed):
 
     async def set_led(self, drone_id: int, r: float, g: float, b: float) -> None:
         model = f"x500_{drone_id}"
+        svc   = self._svc("light_config")
         sem   = self._gz_sem()
 
         async def _send(light: str, pos: tuple) -> None:
@@ -115,7 +126,7 @@ class GazeboPointLightLed(_GazeboLed):
             )
             async with sem:
                 proc = await asyncio.create_subprocess_exec(
-                    "gz", "service", "-s", self._SVC,
+                    "gz", "service", "-s", svc,
                     "--reqtype", "gz.msgs.Light",
                     "--reptype", "gz.msgs.Boolean",
                     "--timeout", "300",
