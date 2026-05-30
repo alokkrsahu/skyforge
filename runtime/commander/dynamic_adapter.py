@@ -7,7 +7,6 @@ Supports multiple takeoff/land cycles within a single session.
 """
 import asyncio
 import math
-import os
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -16,37 +15,13 @@ from mavsdk.offboard import OffboardError, PositionNedYaw
 
 from show.apf import compute_apf_offset
 from show.config import CONTROL_DT, SHOW_ALT_M
+from show.led_backend import make_led_backend
 
-_GZ_LIGHT_SVC = "/world/default/light_config"
-
-# gz transport needs GZ_IP set to reach the sim's partition; without it the
-# service call silently goes nowhere (no LED change).
-_GZ_ENV = {**os.environ, "GZ_IP": "127.0.0.1"}
-
-# Bound concurrent `gz service` subprocesses (4 per drone per colour change →
-# ~400 at 100 drones). Unthrottled, that burst starves the event loop and drops
-# the offboard setpoint stream; the semaphore spreads it.
-_GZ_MAX_CONCURRENT = 16
-_GZ_SEM: "asyncio.Semaphore | None" = None
-
-
-def _gz_sem() -> "asyncio.Semaphore":
-    global _GZ_SEM
-    if _GZ_SEM is None:
-        _GZ_SEM = asyncio.Semaphore(_GZ_MAX_CONCURRENT)
-    return _GZ_SEM
-
-# The drones' visible "LEDs" are the four named arm-tip point lights. We recolor
-# them via the light_config service (the render engine applies this at runtime —
-# verified via a server-side camera). Each must be re-sent with its exact
-# link-relative pose + attenuation, since light_config replaces the whole light.
-# (model.sdf: pose x y 0.05, attenuation range 5 / 0.3 / 0.2 / 0.01)
-_ARM_LIGHTS = {
-    "light_front_left":  (0.174, 0.174, 0.05),
-    "light_front_right": (0.174, -0.174, 0.05),
-    "light_rear_left":  (-0.174, 0.174, 0.05),
-    "light_rear_right": (-0.174, -0.174, 0.05),
-}
+# LED control is delegated to a pluggable backend (Gazebo for SITL, a stub/driver
+# for hardware). ONE module-level instance → its concurrency semaphore is shared
+# fleet-wide (a per-drone backend would spawn ~N×16 `gz` procs and starve the
+# offboard setpoint stream).
+_LED = make_led_backend("commander")
 
 
 def _ease_inout(t: float) -> float:
@@ -59,46 +34,6 @@ class Transition:
     end_pos:    dict   # drone_id → (N, E, D)
     start_time: float
     duration_s: float
-
-
-async def _led_update(drone_id: int, r: float, g: float, b: float) -> None:
-    """Recolor the drone's four arm-tip point lights via the light_config service.
-
-    The render engine applies this at runtime — verified via a server-side
-    camera capture (a point light recolor tinted the scene). The previous
-    visual_config call targeted the 5010_motor_base meshes, which have no SDF
-    material and silently ignore overrides.
-
-    macOS caveat: runtime color renders in camera feeds (e.g. the show_cam
-    ImageDisplay panel), recordings, and a Linux GUI — but NOT in the live
-    macOS GUI 3D view, which does not apply runtime light/material deltas.
-    """
-    model = f"x500_{drone_id}"
-    sem   = _gz_sem()
-
-    async def _send(light: str, pos: tuple[float, float, float]) -> None:
-        x, y, z = pos
-        req = (
-            f'name: "{model}::base_link::{light}" type: POINT '
-            f'diffuse {{r:{r:.3f} g:{g:.3f} b:{b:.3f} a:1}} '
-            f'specular {{r:{r * 0.3:.3f} g:{g * 0.3:.3f} b:{b * 0.3:.3f} a:1}} '
-            f'pose {{position {{x:{x} y:{y} z:{z}}}}} '
-            f'range: 5.0 attenuation_constant: 0.3 attenuation_linear: 0.2 '
-            f'attenuation_quadratic: 0.01 cast_shadows: false intensity: 1.0'
-        )
-        async with sem:
-            proc = await asyncio.create_subprocess_exec(
-                "gz", "service", "-s", _GZ_LIGHT_SVC,
-                "--reqtype", "gz.msgs.Light",
-                "--reptype", "gz.msgs.Boolean",
-                "--timeout", "300",
-                "--req", req,
-                env=_GZ_ENV,
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-            )
-            await proc.wait()
-
-    await asyncio.gather(*(_send(l, p) for l, p in _ARM_LIGHTS.items()))
 
 
 async def telemetry_consumer(
@@ -147,9 +82,9 @@ async def led_watcher(runtime: "DynamicRuntime", abort_event: asyncio.Event) -> 
     """Push the fleet LED colour to Gazebo whenever it changes.
 
     Runs as its own task — deliberately NOT inside the per-drone control loop.
-    Each `_led_update` spawns four `gz` CLI subprocesses; doing that every tick
-    for every drone (the old design) flooded the event loop and starved the
-    offboard setpoint stream, dropping drones out of offboard. Here we send one
+    Each `set_led` spawns four `gz` CLI subprocesses (Gazebo backend); doing that
+    every tick for every drone (the old design) flooded the event loop and starved
+    the offboard setpoint stream, dropping drones out of offboard. Here we send one
     batch only when `runtime.led_color` actually changes, so the flight loop
     never competes with the light subprocesses.
     """
@@ -161,7 +96,7 @@ async def led_watcher(runtime: "DynamicRuntime", abort_event: asyncio.Event) -> 
             r, g, b = color
             try:
                 await asyncio.gather(
-                    *(_led_update(i, r, g, b) for i in range(runtime.n_drones))
+                    *(_LED.set_led(i, r, g, b) for i in range(runtime.n_drones))
                 )
             except Exception:
                 pass   # a transient gz/service hiccup must never kill the watcher
@@ -231,11 +166,35 @@ class DynamicRuntime:
         self.hold_pos.update(end_pos)
 
 
+async def _ensure_ready(drone, timeout: float = 20.0) -> bool:
+    """True once the autopilot link is up and the EKF has global + home position.
+
+    The connect-time readiness gate goes stale under load: a PX4->server heartbeat
+    gap transiently drops the system, and arming a disconnected system makes
+    mavsdk_server *abort* (std::bad_optional_access in its lazy Action plugin)
+    rather than return an error — which kills the server and surfaces to us as
+    "Connection reset by peer". So re-confirm health immediately before every arm.
+
+    Follows _wait_healthy's established pattern: wait_for around a *fresh* health()
+    stream. The generator is discarded afterwards, so the 'never wait_for a
+    telemetry stream you keep using' rule doesn't apply here."""
+    async def _wait():
+        async for h in drone.telemetry.health():
+            if h.is_global_position_ok and h.is_home_position_ok:
+                return True
+        return False
+    try:
+        return await asyncio.wait_for(_wait(), timeout=timeout)
+    except Exception:   # TimeoutError, or a gRPC error if the server is down
+        return False
+
+
 async def run_drone_commander(
     drone_id:    int,
     drone,
     runtime:     DynamicRuntime,
     abort_event: asyncio.Event,
+    respawn_server=None,
 ) -> None:
     tag    = f"[drone {drone_id}]"
     hn, he = runtime.home_ned[drone_id]
@@ -259,13 +218,39 @@ async def run_drone_commander(
         if abort_event.is_set():
             break
 
-        # ── Arm & takeoff ─────────────────────────────────────────────────────
-        print(f"{tag} Arming...")
-        try:
-            await drone.action.arm()
-            await drone.action.takeoff()
-        except Exception as e:
-            print(f"{tag} arm/takeoff failed: {e} — skipping this cycle")
+        # ── Arm & takeoff (crash-hardened) ────────────────────────────────────
+        # mavsdk_server aborts if arm() reaches a momentarily-disconnected system
+        # (bad_optional_access in its lazy Action plugin), so:
+        #  1. gate every arm on a FRESH readiness check (link up + EKF), not the
+        #     possibly-stale connect-time gate;
+        #  2. if the link is down (or a server died mid-arm), respawn that server
+        #     and retry — the old code just "skipped the cycle", leaving the
+        #     server dead so every later takeoff failed too.
+        armed = False
+        for attempt in range(3):
+            if abort_event.is_set():
+                break
+            ready = await _ensure_ready(drone)
+            if not ready and respawn_server is not None:
+                print(f"{tag} link down pre-arm — respawning server (attempt {attempt + 1})")
+                await respawn_server(drone_id)
+                ready = await _ensure_ready(drone, timeout=25.0)
+            if not ready:
+                continue
+            print(f"{tag} Arming...")
+            try:
+                await drone.action.arm()
+                await drone.action.takeoff()
+                armed = True
+                break
+            except Exception as e:
+                print(f"{tag} arm/takeoff failed (attempt {attempt + 1}): {e}")
+                # A throwing arm usually means the server just aborted — respawn
+                # so the next attempt has a live server to talk to.
+                if respawn_server is not None and attempt < 2:
+                    await respawn_server(drone_id)
+        if not armed:
+            print(f"{tag} arm/takeoff failed — skipping this cycle")
             continue
 
         try:

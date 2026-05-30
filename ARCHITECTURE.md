@@ -88,17 +88,27 @@ Two modes (see `runtime/CLAUDE.md` for ops):
   `takeoff` rises drones **in place** (keeps current XY) rather than converging the fleet to home.
 
 MAVSDK/PX4 wiring: one `mavsdk_server` per drone (gRPC `GRPC_BASE+i`, MAVLink UDP `MAVLINK_BASE+i`)
-plus a **GCS beacon** on `GCS_BEACON_MAVLINK` (PX4 hard-codes `remote=14550` and denies arm
-without it). `_wait_healthy` gates on EKF global+home position before arming. Connect tolerates
-partial-fleet failure (respawn/retry; fly the drones that came up).
+plus a **GCS beacon** on `GCS_BEACON_MAVLINK` (PX4 SITL hard-codes `remote=14550` and denies arm
+without it). `_wait_healthy` gates on EKF global+home position before arming; the arm itself is
+crash-hardened (`_ensure_ready` re-checks readiness and respawns a server that aborts mid-arm).
+Connect tolerates partial-fleet failure (respawn/retry; fly the drones that came up).
+
+**Deployment profile** (`show/connection.py`, `load_profile`): the *same* runtime targets SITL,
+HITL, or real PX4 hardware by configuration. With no env set it's the exact SITL wiring above; a
+`$SKYFORGE_FLEET` JSON file instead gives each drone a real MAVLink endpoint (`serial://…`,
+`udp://host:port`) — only that endpoint string changes, the gRPC side stays local — and can disable
+the SITL-only GCS beacon (`use_gcs_beacon:false`). LEDs go through a pluggable **backend**
+(`show/led_backend.py`, `$SKYFORGE_LED_BACKEND`): Gazebo for SITL, a no-op stub (or a driver you
+add) for hardware. See `docs/HARDWARE.md` / `docs/HITL.md` — geodetic origin and on-vehicle
+safety/failsafes are the documented remaining gaps.
 
 ### Critical runtime invariant
 
 A MAVSDK telemetry generator must **never** be wrapped in `asyncio.wait_for` — cancelling a
 pending `__anext__()` permanently breaks the stream. Position/velocity is consumed by a dedicated
 `telemetry_consumer` task (plain `async for`) into a cache; the control loop only reads the cache.
-LED `gz service` subprocesses are bounded by a semaphore so a colour change can't starve the
-offboard setpoint stream.
+The LED Gazebo backend bounds its `gz service` subprocesses with a semaphore so a colour change
+can't starve the offboard setpoint stream.
 
 ## Testing
 

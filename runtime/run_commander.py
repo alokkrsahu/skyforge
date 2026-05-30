@@ -31,13 +31,44 @@ from commander.dynamic_adapter import (
 )
 from commander.commander import FleetCommander
 from commander.cli import cli_loop
-from show.config import (
-    MAVLINK_BASE as _MAVLINK_BASE, GRPC_BASE as _GRPC_BASE,
-    GCS_BEACON_MAVLINK, GCS_BEACON_GRPC,
-)
+from show.connection import load_profile, FleetProfile
 _MAVSDK_SERVER_BIN = os.path.join(
     os.path.dirname(_mavsdk_mod.__file__), "bin", "mavsdk_server"
 )
+
+
+async def _spawn_server(i: int, profile: FleetProfile) -> None:
+    """Start one mavsdk_server for drone i, connected to its MAVLink endpoint
+    (SITL: udpin://0.0.0.0:{port}; hardware: serial:// or udp://host:port).
+    No-op when the profile says the servers are owned elsewhere (HITL/hardware)."""
+    if not profile.spawn_local_server:
+        return
+    conn = profile.conn(i)
+    await asyncio.create_subprocess_exec(
+        _MAVSDK_SERVER_BIN, "-p", str(conn.grpc_port), conn.mavlink_url,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+
+
+async def _respawn_server(i: int, profile: FleetProfile) -> None:
+    """Kill drone i's (crashed) mavsdk_server and start a fresh one on the SAME
+    gRPC port + MAVLink endpoint. The drone's existing System channel and its
+    telemetry_consumer auto-reconnect to the new server, so callers keep their
+    System handle. Used to recover from the mavsdk_server abort on arm
+    (bad_optional_access in the lazy Action plugin when the link has dropped
+    under load). When the profile doesn't own the servers, just wait for the
+    existing System's gRPC channel to auto-reconnect."""
+    if not profile.spawn_local_server:
+        await asyncio.sleep(3.0)
+        return
+    kill = await asyncio.create_subprocess_exec(
+        "pkill", "-9", "-f", f"mavsdk_server -p {profile.conn(i).grpc_port}",
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    await kill.wait()
+    await asyncio.sleep(1.0)
+    await _spawn_server(i, profile)
+    await asyncio.sleep(3.0)   # let the new server complete its MAVLink handshake
 
 
 async def _wait_healthy(drone: System, drone_id: int, timeout: float = 60.0) -> None:
@@ -56,6 +87,14 @@ async def _wait_healthy(drone: System, drone_id: int, timeout: float = 60.0) -> 
 
 
 async def main(n: int) -> None:
+    # Resolve the deployment profile (SITL default, or a $SKYFORGE_FLEET file for
+    # HITL/hardware). A fleet file with an explicit drone list is the source of
+    # truth for the count, so adopt it.
+    profile = load_profile(n)
+    if profile.n != n:
+        print(f"[run_commander] fleet file overrides drone count: {n} → {profile.n}")
+        n = profile.n
+
     print("=" * 55)
     print("  Drone Commander — Live Interactive Mode")
     print(f"  Fleet: {n} drones")
@@ -79,24 +118,23 @@ async def main(n: int) -> None:
     # Without something listening there, PX4 refuses to arm ("No connection to GCS").
     # One server on 14550 receives heartbeats from every PX4 instance and replies,
     # satisfying the GCS-connected check for the whole fleet.
-    print("[run_commander] Spawning GCS beacon on port 14550...")
-    await asyncio.create_subprocess_exec(
-        _MAVSDK_SERVER_BIN, "-p", str(GCS_BEACON_GRPC), f"udpin://0.0.0.0:{GCS_BEACON_MAVLINK}",
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-    )
-    await asyncio.sleep(0.5)
+    if profile.use_gcs_beacon:
+        print(f"[run_commander] Spawning GCS beacon on port {profile.gcs_beacon_mavlink}...")
+        await asyncio.create_subprocess_exec(
+            _MAVSDK_SERVER_BIN, "-p", str(profile.gcs_beacon_grpc),
+            f"udpin://0.0.0.0:{profile.gcs_beacon_mavlink}",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.sleep(0.5)
+    else:
+        print("[run_commander] GCS beacon disabled (real PX4 supplies its own GCS heartbeat).")
 
     print(f"[run_commander] Spawning {n} MAVSDK servers (staggered)...")
     async def _spawn(i: int) -> None:
         await asyncio.sleep(i * 0.2)
-        await asyncio.create_subprocess_exec(
-            _MAVSDK_SERVER_BIN,
-            "-p", str(_GRPC_BASE + i),
-            f"udpin://0.0.0.0:{_MAVLINK_BASE + i}",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        print(f"[run_commander] Server {i} spawned (grpc={_GRPC_BASE+i}  udp={_MAVLINK_BASE+i})")
+        await _spawn_server(i, profile)
+        conn = profile.conn(i)
+        print(f"[run_commander] Server {i} spawned (grpc={conn.grpc_port}  link={conn.mavlink_url})")
     await asyncio.gather(*[_spawn(i) for i in range(n)])
     await asyncio.sleep(3.0)   # final settle — last server needs its MAVLink handshake
 
@@ -104,8 +142,9 @@ async def main(n: int) -> None:
     # If a server crashed (gRPC error), kill it, respawn, and retry once.
     async def _connect(i: int) -> System:
         await asyncio.sleep(i * 0.15)   # 150 ms stagger — avoids gRPC subscription burst
+        conn = profile.conn(i)
         for attempt in range(3):
-            drone = System(mavsdk_server_address="localhost", port=_GRPC_BASE + i)
+            drone = System(mavsdk_server_address=conn.grpc_host, port=conn.grpc_port)
             await drone.connect()
             try:
                 await _wait_healthy(drone, i)
@@ -114,22 +153,10 @@ async def main(n: int) -> None:
                 except Exception:
                     pass
                 return drone
-            except Exception as e:
+            except Exception:
                 if attempt < 2:
                     print(f"[run_commander] Drone {i}: crash (attempt {attempt+1}), respawning...")
-                    kill = await asyncio.create_subprocess_exec(
-                        "pkill", "-9", "-f", f"mavsdk_server -p {_GRPC_BASE + i}",
-                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-                    )
-                    await kill.wait()
-                    await asyncio.sleep(1.5)
-                    await asyncio.create_subprocess_exec(
-                        _MAVSDK_SERVER_BIN,
-                        "-p", str(_GRPC_BASE + i),
-                        f"udpin://0.0.0.0:{_MAVLINK_BASE + i}",
-                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-                    )
-                    await asyncio.sleep(3.0)
+                    await _respawn_server(i, profile)
                 else:
                     raise
         raise RuntimeError(f"Drone {i} unreachable")
@@ -151,7 +178,9 @@ async def main(n: int) -> None:
     # telemetry_consumer (plain async-for stream → cache; never wait_for'd).
     labelled = [("cli", cli_loop(commander))]
     for orig_i, drone in active:
-        labelled.append((f"drone {orig_i}", run_drone_commander(orig_i, drone, runtime, abort_event)))
+        labelled.append((f"drone {orig_i}",
+                         run_drone_commander(orig_i, drone, runtime, abort_event,
+                                             lambda d: _respawn_server(d, profile))))
     for orig_i, drone in active:
         hn, he = runtime.home_ned[orig_i]
         labelled.append((f"telemetry {orig_i}",

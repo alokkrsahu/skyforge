@@ -2,7 +2,8 @@
 
 A drone-show platform: an **offline compiler** that turns a high-level show script into
 validated, collision-free flight trajectories, and an **online runtime** that flies them on
-PX4 SITL via MAVSDK.
+PX4 via MAVSDK — SITL today, with a config-driven path to HITL and real hardware
+(see [docs/HARDWARE.md](docs/HARDWARE.md)).
 
 ```
 show script (Python)
@@ -68,6 +69,21 @@ The runtime **refuses to fly a show that isn't `validated`** (pass `--allow-unva
 `run_skyforge.py` to override). See `runtime/CLAUDE.md` for the MAVSDK/port wiring and operational
 gotchas.
 
+### Targeting real PX4 (HITL / hardware)
+
+The same runtime drives real flight controllers **by configuration** — no code change:
+
+```bash
+export SKYFORGE_FLEET=fleet.json     # per-drone serial:// or udp:// endpoints; beacon off
+export SKYFORGE_LED_BACKEND=stub     # no-op LEDs until a hardware driver is wired
+./t6_commander.sh 4
+```
+
+With neither env var set it's the SITL wiring above (byte-for-byte). The fleet-file schema,
+bring-up checklist, and the remaining gaps (geodetic origin, on-vehicle safety/failsafes) are in
+**[docs/HARDWARE.md](docs/HARDWARE.md)**; single-board validation is in
+**[docs/HITL.md](docs/HITL.md)**.
+
 ## Testing
 
 ```bash
@@ -87,4 +103,5 @@ round-trip + malformed-input) and the runtime telemetry/APF logic (async tests s
 | `core/reactive/` | declarative reactive primitives |
 | `runtime/` | flight runtime — `run_skyforge.py` (player), `run_commander.py` (live), `show/`, `commander/`, launch scripts |
 | `shows/` | example show scripts |
+| `docs/` | hardware / HITL deployment guides |
 | `tests/` | unit + integration tests |
