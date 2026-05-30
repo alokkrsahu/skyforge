@@ -77,6 +77,26 @@ either drop the flag (beacon on) or start one manually:
 (`mavsdk_server -p 50051 udpin://0.0.0.0:15000 &`, etc.), set the flag, and confirm the runtime
 connects **without** spawning new servers (process count unchanged).
 
+## Manual — monitoring with QGroundControl (optional, any mode)
+
+QGC and Skyforge use **different** PX4 links: QGC owns the GCS link (UDP **14550**, where every SITL
+instance sends its GCS stream — disambiguated by `MAV_SYS_ID = instance+1`); Skyforge owns the
+**onboard** links (`15000+i`). So they don't conflict — but QGC and Skyforge's *beacon* both want
+14550, so in QGC mode the beacon steps aside (`SKYFORGE_GCS=qgc`) and QGC supplies the GCS heartbeat
+PX4's arm gate wants (exactly like real hardware).
+
+```bash
+./t1_sitl.sh 2                       # T1
+./t7_qgc.sh                          # opens QGroundControl (auto-connects 14550)
+SKYFORGE_GCS=qgc ./t6_commander.sh 2 # T3 — runs the show; Skyforge skips its beacon
+```
+Expect: QGC **shows both drones** with live telemetry; the runtime prints **"GCS beacon disabled"**;
+drones **arm/takeoff** (this confirms QGC's heartbeat satisfies the arm gate). **QGC must be open
+before you arm** in `qgc` mode (it is the GCS now). Default (`SKYFORGE_GCS` unset) keeps the headless
+beacon and behaves exactly as before. Same `SKYFORGE_GCS=qgc` knob applies to the HITL-proxy and real
+hardware. *(If arm is denied even with QGC up, that's the documented fallback: keep the beacon and
+attach QGC via a MAVLink router.)*
+
 ## Manual — real hardware (deferred; needs a board)
 
 Follow `docs/HITL.md` then `docs/HARDWARE.md`. Order: real MAVLink link (`serial://`/`udp://`) →

@@ -101,11 +101,23 @@ already delegate to the backend — nothing else changes.
    QGroundControl — Skyforge does **not** provide these.
 5. Scale up the fleet file; verify each drone reaches `Ready for takeoff!` before flying a show.
 
-## GCS beacon
+## GCS beacon / QGroundControl (`SKYFORGE_GCS`)
 
 The beacon on UDP 14550 exists **only** because PX4 **SITL** hard-codes `remote=14550` and denies
-arm without a GCS heartbeat there. Real PX4 + a real GCS (QGroundControl) supplies its own — set
-`"use_gcs_beacon": false`.
+arm without a GCS heartbeat there. A real GCS (QGroundControl) supplies its own heartbeat, so on
+hardware you don't need the beacon.
+
+Pick the GCS provider with the **`SKYFORGE_GCS`** env (or a fleet-file `"gcs"` key):
+
+| `SKYFORGE_GCS` | Effect |
+|---|---|
+| unset / `beacon` | spawn the headless beacon (SITL default) |
+| `qgc` | skip the beacon — **QGroundControl owns 14550** and is the GCS heartbeat (run QGC first; see `t7_qgc.sh`) |
+| `none` | skip the beacon — you supply the GCS yourself |
+
+`SKYFORGE_GCS=qgc` is the clean way to let QGC be the GCS (it supersedes hand-setting
+`"use_gcs_beacon": false`, and the env overrides a fleet file). The same knob works for SITL,
+HITL-proxy, and real hardware (QGC connects to the board over USB/UDP).
 
 ## Verified in software vs. needs hardware
 

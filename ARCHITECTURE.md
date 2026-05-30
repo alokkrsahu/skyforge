@@ -15,7 +15,9 @@ The compiler is pure/deterministic and hardware-free; the runtime drives PX4 via
 
 1. **Build** — `ShowBuilder.compile()` (`compiler/show_builder.py`) turns acts (formation +
    transition + hold) into per-drone `(t, Vec3)` waypoints: takeoff → each act → landing.
-   - **Formations** (`compiler/formations.py`) generate per-fleet offsets and **auto-scale**
+   - **Formations** (`compiler/formations/` — a **plugin package**: one auto-discovered file per
+     pattern under `patterns/`, code `.py` or data `.csv`/`.json`; `get_formation()` resolves any
+     spec, `list_formations()` is the catalog) generate per-fleet offsets and **auto-scale**
      (`_fit_min_spacing`, arc-length `spiral`) so `n` drones clear the planned separation.
    - **Assignment** (`compiler/assignment.py`) — `assign_nocross`: Hungarian (min total distance)
      + greedy crossing-swap + a **time-parameterised separation-repair** (closed-form closest

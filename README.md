@@ -52,9 +52,11 @@ builder = ShowBuilder("My Show", drones)
 builder.add_led_cue(t=0, color=Color(0, 0.8, 0))
 ```
 
-Formations: `circle`, `grid`, `line`, `v_shape`, `star`, `spiral`, `text:HELLO`,
-`grid:spacing=4`, or an explicit list of `(dN, dE)` offsets. Formations auto-scale so the fleet
-clears the planned separation.
+Formations: `circle`, `grid`, `line`, `v_shape`, `star`, `spiral`, `text:HELLO`, or an explicit
+list of `(dN, dE)` offsets. Formations auto-scale so the fleet clears the planned separation.
+They're a **plugin package** (`compiler/formations/`): one file per pattern under `patterns/`
+(code `.py` or data `.csv`/`.json`) — drop a file and it's instantly usable, no other edits. See
+[`compiler/formations/patterns/README.md`](compiler/formations/patterns/README.md).
 
 ## Fly it (PX4 SITL — three terminals)
 
@@ -62,13 +64,15 @@ clears the planned separation.
 ./t1_sitl.sh 16            # Terminal 1 — PX4 SITL ×16 + Gazebo (headless)
 ./t1_sitl.sh 16 walls      #   …or pick an arena (./t1_sitl.sh -h lists them)
 ./t2_gazebo_gui.sh         # Terminal 2 — 3D view
+./t7_qgc.sh                # Terminal 7 — optional: QGroundControl monitor (then SKYFORGE_GCS=qgc below)
 ./t5_skyforge.sh ../shows/my_show.skyforge.json   # Terminal 3 — fly the compiled show
 # or:  ./t6_commander.sh 16                        #            — live interactive REPL
 ```
 
 Only `t1` takes the arena (it sets `PX4_GZ_WORLD`); `t2` and the runtime auto-detect the running
 world. The `default` arena is the forest stage (DART, 100+ drones); stock worlds are ODE and warn
-above ~40 drones.
+above ~40 drones. To monitor in **QGroundControl**, run `./t7_qgc.sh` and start the show with
+`SKYFORGE_GCS=qgc` (QGC then owns the GCS link + heartbeat; Skyforge skips its beacon).
 
 The runtime **refuses to fly a show that isn't `validated`** (pass `--allow-unvalidated` to
 `run_skyforge.py` to override). See `runtime/CLAUDE.md` for the MAVSDK/port wiring and operational

@@ -36,14 +36,17 @@ the connection flags change. The same `run_commander.py` / `run_skyforge.py` dri
      only opens the gRPC channel and lets it auto-reconnect.
 3. **LEDs.** Keep `gazebo` if you still run the Gazebo GUI for visualization, or
    `export SKYFORGE_LED_BACKEND=stub` for a headless HITL bench.
-4. **Launch** exactly as in SITL:
+4. **GCS = QGroundControl.** You're already running QGC for the board, so let it be the GCS
+   heartbeat: `export SKYFORGE_GCS=qgc` (Skyforge then skips its SITL beacon). `t7_qgc.sh` opens it.
+5. **Launch** exactly as in SITL:
 
    ```bash
    export SKYFORGE_FLEET=hitl_fleet.json
-   ./t6_commander.sh 1        # or  ./t5_skyforge.sh <show>
+   export SKYFORGE_GCS=qgc           # QGC supplies the GCS heartbeat
+   ./t6_commander.sh 1               # or  ./t5_skyforge.sh <show>
    ```
 
-5. Confirm the board arms, `_wait_healthy` passes (real EKF GPS + home), and `takeoff`/`land`
+6. Confirm the board arms, `_wait_healthy` passes (real EKF GPS + home), and `takeoff`/`land`
    behave — then exercise a formation.
 
 ## Verified in software vs. needs the board

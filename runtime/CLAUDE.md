@@ -15,6 +15,9 @@ Three terminals are required. Always start in order:
 # Terminal 2 — Gazebo GUI (3D visualization)
 ./t2_gazebo_gui.sh        # arena-agnostic — attaches to whatever t1 launched
 
+# Terminal 7 — QGroundControl (optional: monitor + GCS). Then run T3 with SKYFORGE_GCS=qgc.
+./t7_qgc.sh
+
 # Terminal 3 — choose one mode (no arena arg — the runtime auto-detects it):
 ./t6_commander.sh [N]     # interactive REPL (live commands)
 ./t5_skyforge.sh [file]   # pre-programmed polynomial show
@@ -23,6 +26,12 @@ Three terminals are required. Always start in order:
 Only `t1` takes the arena (it sets `PX4_GZ_WORLD`); `t2` and the runtime **auto-detect** the
 running world name. Stock worlds use ODE physics (may crash >~40 drones — warned, not blocked);
 only the `default` arena (the deployed forest world) uses DART. See "Arena / World" below.
+
+**GCS provider (`SKYFORGE_GCS`):** `beacon` (default — headless mavsdk_server on 14550, satisfies
+PX4 SITL's arm gate), `qgc` (skip the beacon — QGroundControl owns 14550 and is the heartbeat; run
+`t7_qgc.sh` first, then `SKYFORGE_GCS=qgc ./t6_commander.sh N`), or `none`. QGC and Skyforge don't
+conflict: QGC uses the **GCS link** (14550, all instances by `MAV_SYS_ID`); Skyforge uses the
+**onboard links** (`15000+i`). Same knob for SITL / HITL / real hardware.
 
 Direct Python invocations (same virtualenv at `~/src/PX4-Autopilot/.venv`):
 ```bash
@@ -201,4 +210,8 @@ package root (`..`) is added to `sys.path` at runtime. Key imports:
 - `from core.show_format.reader import from_json` — load `.skyforge.json` show files
 - `from show.skyforge_adapter import SkyforgeRuntime` — polynomial evaluator
 
-Formation spec strings: `"circle"`, `"star"`, `"text:HELLO"`, `"circle:radius_m=8"`, `"grid:spacing=4"`, single capital letter as shorthand for `"text:X"`.
+Formation spec strings: `"circle"`, `"star"`, `"text:HELLO"`, `"circle:radius_m=8"`, single capital
+letter as shorthand for `"text:X"`. Formations are a **plugin package** — `compiler/formations/`
+with one auto-discovered file per pattern under `patterns/` (code `.py` or data `.csv`/`.json`);
+dropping a file there makes it instantly usable with **no other edits**. The commander's
+`formations` command lists the catalog (`list_formations()`); see `compiler/formations/patterns/README.md`.
