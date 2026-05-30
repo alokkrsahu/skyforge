@@ -14,9 +14,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../runtime"))
 
 from show import config
 from show.connection import (
-    load_profile, sitl_default_conn, SKYFORGE_FLEET_ENV,
+    load_profile, sitl_default_conn, SKYFORGE_FLEET_ENV, GCS_ENV,
     reconcile_commander_fleet_size, validate_show_fleet_size,
 )
+
+
+def _set_gcs(val):
+    old = os.environ.get(GCS_ENV)
+    if val is None:
+        os.environ.pop(GCS_ENV, None)
+    else:
+        os.environ[GCS_ENV] = val
+    return old
+
+
+def _restore_gcs(old):
+    if old is None:
+        os.environ.pop(GCS_ENV, None)
+    else:
+        os.environ[GCS_ENV] = old
 
 
 def _fleet_file(data: dict) -> str:
@@ -30,18 +46,22 @@ def _fleet_file(data: dict) -> str:
 # ── Backward-compat: default == exact SITL ────────────────────────────────────
 
 def test_default_is_exact_sitl():
-    """No fleet file → byte-for-byte the historical SITL configuration."""
-    prof = load_profile(4, None)
-    assert prof.n == 4
-    assert prof.spawn_local_server is True
-    assert prof.use_gcs_beacon is True
-    assert prof.gcs_beacon_mavlink == config.GCS_BEACON_MAVLINK
-    assert prof.gcs_beacon_grpc == config.GCS_BEACON_GRPC
-    for i in range(4):
-        c = prof.conn(i)
-        assert c.mavlink_url == f"udpin://0.0.0.0:{config.MAVLINK_BASE + i}"
-        assert c.grpc_host == "localhost"
-        assert c.grpc_port == config.GRPC_BASE + i
+    """No fleet file (and no $SKYFORGE_GCS) → byte-for-byte the historical SITL config."""
+    g = _set_gcs(None)
+    try:
+        prof = load_profile(4, None)
+        assert prof.n == 4
+        assert prof.spawn_local_server is True
+        assert prof.use_gcs_beacon is True
+        assert prof.gcs_beacon_mavlink == config.GCS_BEACON_MAVLINK
+        assert prof.gcs_beacon_grpc == config.GCS_BEACON_GRPC
+        for i in range(4):
+            c = prof.conn(i)
+            assert c.mavlink_url == f"udpin://0.0.0.0:{config.MAVLINK_BASE + i}"
+            assert c.grpc_host == "localhost"
+            assert c.grpc_port == config.GRPC_BASE + i
+    finally:
+        _restore_gcs(g)
 
 
 def test_env_unset_matches_explicit_none():
@@ -235,5 +255,67 @@ def test_validate_show_warns_when_more():
 
 
 def test_validate_show_exact_no_message():
-    ok, msg = validate_show_fleet_size(load_profile(4, None), 4)
-    assert ok is True and msg is None
+    g = _set_gcs(None)
+    try:
+        ok, msg = validate_show_fleet_size(load_profile(4, None), 4)
+        assert ok is True and msg is None
+    finally:
+        _restore_gcs(g)
+
+
+# ── GCS mode ($SKYFORGE_GCS) — QGroundControl integration knob ────────────────
+
+def test_gcs_env_qgc_disables_beacon():
+    g = _set_gcs("qgc")
+    try:
+        assert load_profile(4, None).use_gcs_beacon is False   # no fleet file needed
+    finally:
+        _restore_gcs(g)
+
+
+def test_gcs_env_none_disables_beacon():
+    g = _set_gcs("none")
+    try:
+        assert load_profile(4, None).use_gcs_beacon is False
+    finally:
+        _restore_gcs(g)
+
+
+def test_gcs_env_beacon_keeps_beacon():
+    g = _set_gcs("beacon")
+    try:
+        prof = load_profile(4, None)
+        assert prof.use_gcs_beacon is True and prof.warnings == ()
+    finally:
+        _restore_gcs(g)
+
+
+def test_gcs_fleet_file_mode():
+    g = _set_gcs(None)
+    path = _fleet_file({"gcs": "qgc"})
+    try:
+        assert load_profile(4, path).use_gcs_beacon is False
+    finally:
+        _restore_gcs(g)
+        os.unlink(path)
+
+
+def test_gcs_env_overrides_fleet_use_gcs_beacon():
+    """$SKYFORGE_GCS=qgc beats a fleet file that says use_gcs_beacon:true."""
+    g = _set_gcs("qgc")
+    path = _fleet_file({"use_gcs_beacon": True})
+    try:
+        assert load_profile(4, path).use_gcs_beacon is False
+    finally:
+        _restore_gcs(g)
+        os.unlink(path)
+
+
+def test_gcs_unknown_mode_warns_and_keeps_beacon():
+    g = _set_gcs("nonsense")
+    try:
+        prof = load_profile(4, None)
+        assert prof.use_gcs_beacon is True
+        assert any("GCS mode" in w for w in prof.warnings)
+    finally:
+        _restore_gcs(g)

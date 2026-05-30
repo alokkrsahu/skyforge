@@ -37,6 +37,8 @@ from typing import Optional
 from show import config
 
 SKYFORGE_FLEET_ENV = "SKYFORGE_FLEET"
+GCS_ENV = "SKYFORGE_GCS"
+_GCS_MODES = ("beacon", "qgc", "none")
 
 
 @dataclass(frozen=True)
@@ -78,14 +80,22 @@ def sitl_default_conn(i: int) -> DroneConn:
     )
 
 
-def _sitl_profile(n: int) -> FleetProfile:
-    return FleetProfile(
-        conns=tuple(sitl_default_conn(i) for i in range(n)),
-        spawn_local_server=True,
-        use_gcs_beacon=True,
-        gcs_beacon_mavlink=config.GCS_BEACON_MAVLINK,
-        gcs_beacon_grpc=config.GCS_BEACON_GRPC,
-    )
+def _resolve_gcs_beacon(data: dict):
+    """Whether to spawn the SITL GCS beacon. Precedence:
+        $SKYFORGE_GCS env  >  fleet-file "gcs" mode  >  fleet-file "use_gcs_beacon" bool  >  True.
+    Modes: 'beacon' (spawn it — SITL default), 'qgc'/'none' (don't — QGroundControl or you own
+    14550). QGC then provides the GCS heartbeat that PX4's arm gate wants. Returns
+    (use_beacon, warning_or_None); an unknown mode warns and falls back to the beacon."""
+    mode = (os.environ.get(GCS_ENV) or "").strip().lower()
+    if not mode:
+        mode = str(data.get("gcs", "")).strip().lower()
+    if mode:
+        if mode not in _GCS_MODES:
+            return True, f"unknown GCS mode {mode!r} (use beacon|qgc|none); spawning the beacon"
+        return (mode == "beacon"), None
+    if "use_gcs_beacon" in data:
+        return bool(data["use_gcs_beacon"]), None
+    return True, None
 
 
 def load_profile(n: int, fleet_path: Optional[str] = None) -> FleetProfile:
@@ -105,19 +115,19 @@ def load_profile(n: int, fleet_path: Optional[str] = None) -> FleetProfile:
     """
     if fleet_path is None:
         fleet_path = os.environ.get(SKYFORGE_FLEET_ENV) or None
-    if fleet_path is None:
-        return _sitl_profile(n)
 
-    try:
-        with open(fleet_path) as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        raise ValueError(f"Could not load SKYFORGE_FLEET file {fleet_path!r}: {e}") from e
-    if not isinstance(data, dict):
-        raise ValueError(f"SKYFORGE_FLEET file {fleet_path!r} must be a JSON object")
+    if fleet_path is None:
+        data = {}   # no fleet file → SITL defaults, but $SKYFORGE_GCS still applies below
+    else:
+        try:
+            with open(fleet_path) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            raise ValueError(f"Could not load SKYFORGE_FLEET file {fleet_path!r}: {e}") from e
+        if not isinstance(data, dict):
+            raise ValueError(f"SKYFORGE_FLEET file {fleet_path!r} must be a JSON object")
 
     spawn_local_server = bool(data.get("spawn_local_server", True))
-    use_gcs_beacon     = bool(data.get("use_gcs_beacon", True))
     grpc_host_default  = str(data.get("grpc_host", "localhost"))
     grpc_base          = int(data.get("grpc_base", config.GRPC_BASE))
 
@@ -142,11 +152,13 @@ def load_profile(n: int, fleet_path: Optional[str] = None) -> FleetProfile:
             ))
         conns = tuple(parsed)
 
+    use_gcs_beacon, gcs_warn = _resolve_gcs_beacon(data)
+    warnings = [gcs_warn] if gcs_warn else []
+
     # Sanity: a remote grpc_host can only work if the mavsdk_server is already
     # running THERE — this code only ever spawns servers locally. So a remote host
     # with spawn_local_server=True is a misconfig (server spawns on localhost while
     # the System connects to the remote host). Warn; don't block (the user may route).
-    warnings = []
     if spawn_local_server:
         remote = sorted({c.grpc_host for c in conns if c.grpc_host not in _LOCAL_HOSTS})
         if remote:
