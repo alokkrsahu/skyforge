@@ -38,6 +38,20 @@ def test_ws_streams_telemetry_frames():
             assert "t" in f and "transition" in f
 
 
+def test_ws_echoes_cmd_result():
+    rt = DynamicRuntime(2, [(0, 0), (0, 2)]); rt.airborne = True; rt.ready_target = 2
+    c = TestClient(build_app(FleetCommander(rt), rt, asyncio.Event(), None))
+    c.post("/api/cmd/formation", json={"spec": "circle"})        # enqueues a cmd_result
+    with c.websocket_connect("/ws") as ws:
+        for _ in range(5):                                        # telemetry then the echo
+            f = ws.receive_json()
+            if f["type"] == "cmd_result":
+                assert f["verb"] == "formation" and f["ok"] is True
+                break
+        else:
+            raise AssertionError("no cmd_result frame received")
+
+
 def test_peek_target_does_not_clear_transition_but_target_ned_does():
     rt = DynamicRuntime(2, [(0, 0), (0, 2)])
     # a transition that's already 'finished' (start in the past, short duration → alpha>=1)

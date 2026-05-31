@@ -41,34 +41,46 @@ class RtlReq(BaseModel):       transition_s: float = 8.0
 def register_control(app: FastAPI) -> None:
     cmd = lambda: app.state.commander    # injected FleetCommander
 
+    def reply(msg: str, verb: str) -> dict:
+        """Classify + echo to the cmd_result stream (command log / multi-window sync)."""
+        res = classify(msg, verb)
+        q = app.state.cmd_q
+        if q is not None:
+            try:
+                q.put_nowait({"type": "cmd_result", **res})
+            except Exception:
+                try: q.get_nowait(); q.put_nowait({"type": "cmd_result", **res})
+                except Exception: pass
+        return res
+
     @app.post("/api/cmd/takeoff")
-    async def takeoff(b: TakeoffReq):   return classify(await cmd().takeoff(b.altitude_m), "takeoff")
+    async def takeoff(b: TakeoffReq):   return reply(await cmd().takeoff(b.altitude_m), "takeoff")
 
     @app.post("/api/cmd/formation")
-    async def formation(b: FormationReq): return classify(await cmd().formation(b.spec, b.transition_s), "formation")
+    async def formation(b: FormationReq): return reply(await cmd().formation(b.spec, b.transition_s), "formation")
 
     @app.post("/api/cmd/move")
-    async def move(b: MoveReq):         return classify(await cmd().move(b.dN, b.dE, b.transition_s), "move")
+    async def move(b: MoveReq):         return reply(await cmd().move(b.dN, b.dE, b.transition_s), "move")
 
     @app.post("/api/cmd/altitude")
-    async def altitude(b: AltReq):      return classify(await cmd().set_altitude(b.alt_m, b.transition_s), "altitude")
+    async def altitude(b: AltReq):      return reply(await cmd().set_altitude(b.alt_m, b.transition_s), "altitude")
 
     @app.post("/api/cmd/color")
     async def color(b: ColorReq):
         msg = await (cmd().set_color(b.name) if b.name is not None else cmd().set_color(b.r, b.g, b.b))
-        return classify(msg, "color")
+        return reply(msg, "color")
 
     @app.post("/api/cmd/hover")
-    async def hover():                  return classify(await cmd().hover(), "hover")
+    async def hover():                  return reply(await cmd().hover(), "hover")
 
     @app.post("/api/cmd/land")
-    async def land(b: LandReq):         return classify(await cmd().land(b.stagger), "land")
+    async def land(b: LandReq):         return reply(await cmd().land(b.stagger), "land")
 
     @app.post("/api/cmd/rtl")
-    async def rtl(b: RtlReq):           return classify(await cmd().rtl(b.transition_s), "rtl")
+    async def rtl(b: RtlReq):           return reply(await cmd().rtl(b.transition_s), "rtl")
 
     @app.post("/api/cmd/abort")
-    async def abort():                  return classify(await cmd().abort(), "abort")  # E-STOP: no guard, no I/O
+    async def abort():                  return reply(await cmd().abort(), "abort")  # E-STOP: no guard, no I/O
 
     @app.post("/api/session/kill")
     async def kill():
@@ -86,14 +98,17 @@ def register_ws(app: FastAPI) -> None:
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
-        hq = app.state.health_q
+        hq, cq = app.state.health_q, app.state.cmd_q
         try:
             while True:
                 snap = await app.state.commander.snapshot()
                 await sock.send_json({"type": "telemetry", "t": time.monotonic(), **snap})
-                if hq is not None:
+                if cq is not None:                              # cmd_result echoes (command log)
+                    while not cq.empty():
+                        await sock.send_json(cq.get_nowait())
+                if hq is not None:                              # 1 Hz FleetSummary frames
                     while not hq.empty():
-                        await sock.send_json(hq.get_nowait())   # 1 Hz FleetSummary frames
+                        await sock.send_json(hq.get_nowait())
                 await asyncio.sleep(0.1)                         # 10 Hz telemetry cadence
         except WebSocketDisconnect:
             return
@@ -106,6 +121,18 @@ def build_app(commander, runtime, abort_event, health_q=None) -> FastAPI:
     app.state.runtime     = runtime
     app.state.abort_event = abort_event
     app.state.health_q    = health_q
+    app.state.cmd_q       = asyncio.Queue(maxsize=64)   # cmd_result echo stream
     register_control(app)
     register_ws(app)
+    _mount_ui(app)
     return app
+
+
+def _mount_ui(app: FastAPI) -> None:
+    """Serve the built React app (ui/dist) at / when present (production); in dev the
+    Vite server proxies /api and /ws here. No-op if the UI hasn't been built yet."""
+    import pathlib
+    from fastapi.staticfiles import StaticFiles
+    dist = pathlib.Path(__file__).resolve().parents[1] / "ui" / "dist"
+    if dist.is_dir():
+        app.mount("/", StaticFiles(directory=str(dist), html=True), name="ui")

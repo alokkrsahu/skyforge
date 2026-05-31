@@ -136,6 +136,12 @@ thousands; on hardware each agent runs on the drone's companion computer.)
 with reserve). For wind robustness, add a `<wind>`/Wind-system plugin to the arena SDF (or PX4 SITL
 wind params), fly a show, and confirm APF + tracking hold separation under disturbance.
 
+**Operator UI (React + three.js, Phase 1 MVP).** `pip install -e ".[ui]"`; build the UI
+(`cd ui && npm install && npm run build`); `./t1_sitl.sh 16` then `SKYFORGE_WEB=1 ./t6_commander.sh 16`;
+open `http://127.0.0.1:8787`. **Pass:** the 3D viewport shows the fleet (live, ghost targets); **takeoff
+→ formation circle → move → land/abort** all fly from the browser; the command log shows tri-state
+results; **Shift+Esc** triggers E-STOP. (Backend bridge logic is pinned hermetically by `backend/tests/`.)
+
 ## Manual — real hardware (deferred; needs a board)
 
 Follow `docs/HITL.md` then `docs/HARDWARE.md`. Order: real MAVLink link (`serial://`/`udp://`) →
