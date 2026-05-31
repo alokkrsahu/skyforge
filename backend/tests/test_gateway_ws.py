@@ -40,6 +40,7 @@ def test_gateway_ws_accepts_and_replays_logs(monkeypatch):
     async def fake_exec(*argv, **kw):
         return _FakeProc(["[t5] Launching show: x.json"])
     monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(sup.glob, "glob", lambda *a, **k: [])      # teardown must not rm real /tmp socks
 
     with TestClient(app) as client:
         # 1) The socket ACCEPTS and replays a proc backlog frame — the regression (the gateway

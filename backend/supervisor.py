@@ -22,6 +22,7 @@ import asyncio
 import collections
 import glob
 import os
+import shlex
 import signal
 import time
 
@@ -104,6 +105,7 @@ class Supervisor:
         self.root = root or os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         self._app = app                                              # for broadcast (None → no-op)
         self.procs: dict[str, asyncio.subprocess.Process] = {}       # background-mode handles
+        self.terms: dict[str, dict] = {}                             # terminal-mode tracking (no PID)
         self.rings: dict[str, collections.deque] = {}                # per-target log buffers
         self.readers: dict[str, asyncio.Task] = {}                   # per-target reader tasks
         self.state: dict[str, dict] = {}                             # per-target state machine
@@ -168,10 +170,21 @@ class Supervisor:
             try: p.kill()
             except Exception: pass
 
-    async def _stop_target(self, target: str) -> None:
-        """Stop a running instance of `target` and cancel its reader (don't orphan a respawn)."""
-        await self._stop(self.procs.get(target))         # SIGTERM first → child stops writing
-        reader = self.readers.pop(target, None)           # then cancel the reader (no pipe deadlock)
+    async def _stop_one(self, target: str) -> None:
+        """Stop a running instance of `target` (background OR terminal) and cancel its reader —
+        don't orphan a respawn, and SIGTERM before cancelling so the child stops writing first."""
+        if target in self.terms:                          # terminal mode: no PID handle → pkill the script
+            script = LAUNCHERS.get(target, (None,))[0]
+            if script:
+                try:
+                    pk = await asyncio.create_subprocess_exec("pkill", "-f", script)
+                    await pk.wait()
+                except Exception:
+                    pass
+            self.terms.pop(target, None)
+        else:
+            await self._stop(self.procs.get(target))      # SIGTERM first → child stops writing
+        reader = self.readers.pop(target, None)            # then cancel the reader (no pipe deadlock)
         if reader is not None and not reader.done():
             reader.cancel()
             try: await reader
@@ -201,31 +214,74 @@ class Supervisor:
     async def spawn(self, target: str, *, n: int = 4, arena: str = "default",
                     show: str | None = None, opts: dict | None = None,
                     mode: str = "background") -> int:
-        await self._stop_target(target)                   # don't orphan a running instance
+        await self._stop_one(target)                      # don't orphan a running instance
         argv = launch_argv(self.root, target, n=n, arena=arena, show=show)
-        env  = {**os.environ, **compose_env(opts or {})}
+        over = compose_env(opts or {})
         self._spawn_n[target] = n
+        self.rings[target]   = collections.deque(maxlen=_LOG_RING)
+        self._ready_events[target] = asyncio.Event()
+        if mode == "terminal":
+            return await self._spawn_terminal(target, argv, over, n)
         proc = await asyncio.create_subprocess_exec(
-            *argv, env=env, cwd=self.root,
+            *argv, env={**os.environ, **over}, cwd=self.root,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,             # one ordered, interleaved stream
             stdin=asyncio.subprocess.DEVNULL,             # headless t6 must never block on a TTY
         )
         self.procs[target]   = proc
-        self.rings[target]   = collections.deque(maxlen=_LOG_RING)
-        self._ready_events[target] = asyncio.Event()
         self._set_state(target, "starting", pid=proc.pid, code=None,
                         ready_n=0, ready_of=(n if target == "sitl" else 1))
         self.readers[target] = asyncio.create_task(self._read_loop(target, proc))
         return proc.pid
 
+    async def _spawn_terminal(self, target: str, argv: list[str], over: dict, n: int) -> int:
+        """Open a real macOS Terminal window running the launcher, tee'd to a log file we tail
+        (we can't capture a Terminal window's stdout, so readiness/streaming come from the file).
+        PID is unknown; stop is by pkill-by-script (see _stop_one)."""
+        logf = f"/tmp/skyforge_{target}.log"
+        try: open(logf, "w").close()                      # truncate so the tail starts clean
+        except OSError: pass
+        env_prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in over.items())
+        inner = " ".join(shlex.quote(a) for a in argv)
+        cmd = f"cd {shlex.quote(self.root)} && {env_prefix} {inner} 2>&1 | tee {shlex.quote(logf)}".strip()
+        applescript = 'tell application "Terminal" to do script "%s"' % cmd.replace("\\", "\\\\").replace('"', '\\"')
+        await asyncio.create_subprocess_exec("osascript", "-e", applescript)   # returns immediately
+        self.terms[target] = {"logf": logf}
+        self._set_state(target, "starting", pid=None, code=None,
+                        ready_n=0, ready_of=(n if target == "sitl" else 1))
+        self.readers[target] = asyncio.create_task(self._tail_loop(target, logf))
+        return 0
+
+    async def _tail_loop(self, target: str, logf: str) -> None:
+        """Stream a terminal-mode process by tailing its tee'd log file (same frames/predicates
+        as the pipe reader)."""
+        pos = 0
+        ring = self.rings[target]
+        try:
+            while True:
+                chunk = ""
+                try:
+                    with open(logf) as f:
+                        f.seek(pos); chunk = f.read(); pos = f.tell()
+                except OSError:
+                    pass
+                for line in chunk.splitlines():
+                    frame = {"type": "log", "target": target, "line": line, "t": time.monotonic()}
+                    ring.append(frame); self._broadcast(frame)
+                    self._evaluate_readiness(target, line)
+                await asyncio.sleep(0.3)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._broadcast({"type": "proc", "procs": self.status()})
+
     def status(self) -> dict:
         out = {}
         for target, st in self.state.items():
             proc = self.procs.get(target)
+            running = target in self.terms or (proc is not None and proc.returncode is None)
             out[target] = {"state": st.get("state", "idle"), "pid": st.get("pid"),
-                           "running": proc is not None and proc.returncode is None,
-                           "code": st.get("code"),
+                           "running": running, "code": st.get("code"),
                            "ready_n": st.get("ready_n", 0), "ready_of": st.get("ready_of", 1)}
         return out
 
@@ -303,16 +359,23 @@ class Supervisor:
             self._orchestrating = False
 
     async def teardown(self) -> list[str]:
-        """SIGTERM tracked procs in safe order, cancel their readers, then clean up orphan
-        mavsdk_server/sock files (a stale server/sock otherwise denies arm on the next
-        bring-up — known gotcha)."""
+        """Abort any in-flight launch, SIGTERM/pkill tracked procs in safe order, cancel their
+        readers, then clean up orphan mavsdk_server + stale sockets/locks (a stale server/sock
+        otherwise denies arm on the next bring-up — known clean-restart gotcha)."""
+        if self._launch_task is not None and not self._launch_task.done():
+            self._launch_task.cancel()
+            try: await self._launch_task
+            except BaseException: pass
+            self._lifecycle("aborted", "launch aborted by teardown")
+        self._orchestrating = False
+
         killed = []
         for name in _TEARDOWN_ORDER:
             p = self.procs.get(name)
-            if p is not None and p.returncode is None:
-                await self._stop(p)                       # SIGTERM + AWAIT exit (kill if slow)
+            if (p is not None and p.returncode is None) or name in self.terms:
+                await self._stop_one(name)                # SIGTERM/pkill + cancel reader
                 killed.append(name)
-        for target, reader in list(self.readers.items()):    # cancel readers AFTER stopping procs
+        for target, reader in list(self.readers.items()):    # defensive: any reader not yet cancelled
             if not reader.done():
                 reader.cancel()
         await asyncio.gather(*self.readers.values(), return_exceptions=True)
@@ -322,9 +385,14 @@ class Supervisor:
             await pk.wait()
         except Exception:
             pass
+        for pat in ("/tmp/px4-sock-*", "/tmp/px4_lock-*"):   # documented clean-restart cleanup
+            for f in glob.glob(pat):
+                try: os.remove(f)
+                except OSError: pass
         for name in killed:
             self._set_state(name, "exited")
         self.procs.clear()
+        self.terms.clear()
         self._broadcast({"type": "proc", "procs": self.status()})
         return killed
 

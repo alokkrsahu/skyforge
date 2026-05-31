@@ -7,13 +7,21 @@ verified manually.
 """
 import asyncio
 import os
-import signal
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import backend.supervisor as sup
 from backend.supervisor import compose_env, parse_sitl_ready, launch_argv, Supervisor, LAUNCHERS
+
+
+@pytest.fixture(autouse=True)
+def _no_real_fs(monkeypatch):
+    """teardown() globs + removes /tmp/px4-sock-*,px4_lock-* — never touch a dev machine's real
+    sockets from a unit test."""
+    monkeypatch.setattr(sup.glob, "glob", lambda *a, **k: [])
 
 
 # ── A fake subprocess: yields canned stdout lines, then keeps the pipe open (blocking on
@@ -229,6 +237,39 @@ def test_orchestrated_launch_times_out_on_sitl(monkeypatch):
     real = _sup.Supervisor._await_ready
     async def quick(self, target, timeout=240.0): return await real(self, target, timeout=0.1)
     monkeypatch.setattr(_sup.Supervisor, "_await_ready", quick)
+    asyncio.run(body())
+
+
+def test_terminal_mode_spawns_osascript(monkeypatch):
+    calls = []
+    async def fake_exec(*argv, **kw):
+        calls.append(argv); return _FakeProc()
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", fake_exec)
+
+    async def body():
+        s = Supervisor(root="/repo")
+        await s.spawn("sitl", n=2, mode="terminal")
+        assert any(a and a[0] == "osascript" for a in calls)       # opened a Terminal window
+        assert "sitl" in s.terms and "sitl" not in s.procs         # tracked as terminal (no PID)
+        assert s.status()["sitl"]["running"] and s.status()["sitl"]["state"] == "starting"
+        await s.teardown()
+        assert "sitl" not in s.terms                               # pkill'd + untracked
+    asyncio.run(body())
+
+
+def test_teardown_aborts_inflight_launch(monkeypatch):
+    hub = _Hub(); q = hub.sink()
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", _fake_exec_returning([[]]))  # sitl never readies
+
+    async def body():
+        s = Supervisor(root="/repo", app=hub)
+        s._orchestrating = True
+        s._launch_task = asyncio.create_task(s.orchestrate(n=2))   # blocks awaiting SITL ready
+        await asyncio.sleep(0.05)
+        await s.teardown()                                         # must abort the launch
+        assert s._launch_task.done()
+        assert not s._orchestrating
+        assert "aborted" in [f["phase"] for f in _drain(q, "lifecycle")]
     asyncio.run(body())
 
 
