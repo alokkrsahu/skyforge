@@ -162,10 +162,13 @@ def build_app(commander, runtime, abort_event, health_q=None) -> FastAPI:
     app.state.health_q    = health_q                    # 1 Hz FleetSummary (pumped by serve_web)
     app.state.subscribers = set()                       # per-client frame queues (fan-out)
     app.state.command_token = None                       # single-writer lock (None = open)
-    # Loopback CORS so the UI served by the gateway can reach this bridge on its own port.
+    # Order matters: Starlette runs the LAST-added middleware OUTERMOST. Register the
+    # command lock FIRST, then CORS, so CORS wraps the lock — otherwise the lock's 409
+    # short-circuit returns before CORS attaches headers and the browser sees a CORS error
+    # instead of the guard JSON.
+    register_command_lock(app)
     app.add_middleware(CORSMiddleware, allow_origin_regex=r"http://(127\.0\.0\.1|localhost)(:\d+)?",
                        allow_methods=["*"], allow_headers=["*"])
-    register_command_lock(app)
     register_control(app)
     register_ws(app)
     from .offline import register_offline               # only the CHEAP formation catalog

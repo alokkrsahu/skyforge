@@ -121,3 +121,12 @@ def test_command_lock_enforced_except_abort():
     assert c.post("/api/cmd/abort").json()["status"].startswith("ABORT")
     c.post("/api/command/release")
     assert c.post("/api/cmd/hover").json()["ok"] is True   # open again after release
+
+
+def test_lock_409_carries_cors_header():
+    # CORS must wrap the lock so the 409 reaches a browser with Access-Control-Allow-Origin.
+    c, _ = _client(airborne=True)
+    c.post("/api/command/acquire")
+    r = c.post("/api/cmd/hover", headers={"origin": "http://127.0.0.1:5173"})
+    assert r.status_code == 409
+    assert "access-control-allow-origin" in {k.lower() for k in r.headers}
