@@ -22,6 +22,7 @@ import asyncio
 import collections
 import glob
 import os
+import re
 import shlex
 import signal
 import time
@@ -29,6 +30,10 @@ import time
 from pydantic import BaseModel
 
 from .pubsub import broadcast
+
+# t1_sitl.sh prints fleet readiness to ITS OWN stdout (the per-instance "Startup script returned
+# successfully" lines go to /tmp/px4_sitl_*.log, which the captured stdout never sees).
+_T1_READY = re.compile(r"\[t1\]\s+(\d+)\s*/\s*(\d+)\s+drones fully started")
 
 # launch name → (script under runtime/, is_long_running)
 LAUNCHERS = {
@@ -131,16 +136,20 @@ class Supervisor:
     # ── readiness predicates (per target, from each script's stdout markers) ─────
     def _evaluate_readiness(self, target: str, line: str) -> None:
         if target == "sitl":
-            if "Startup script returned successfully" in line:
-                st = self.state.setdefault(target, _default_state())
-                n  = st.get("ready_n", 0) + 1
-                of = self._spawn_n.get("sitl", st.get("ready_of", 1))
+            m = _T1_READY.search(line)                       # "[t1] 3/4 drones fully started"
+            if m:
+                n, of = int(m.group(1)), int(m.group(2))
                 self._set_state("sitl", ready_n=n, ready_of=of)
                 self._broadcast({"type": "ready", "target": "sitl", "n": n, "of": of})
                 if n >= of:
                     self._set_state("sitl", "running")
                     self._ready_events.setdefault("sitl", asyncio.Event()).set()
-            elif "returned with return value:" in line or "FAILED after" in line:
+            elif "drones ready" in line:                     # "[t1] All N drones ready!"
+                of = self._spawn_n.get("sitl", 1)
+                self._set_state("sitl", "running", ready_n=of, ready_of=of)
+                self._broadcast({"type": "ready", "target": "sitl", "n": of, "of": of})
+                self._ready_events.setdefault("sitl", asyncio.Event()).set()
+            elif "FAILED after" in line:                     # "[t1] R/N ready, F FAILED after 3 retries"
                 self._set_state("sitl", "failed")
                 self._ready_events.setdefault("sitl", asyncio.Event()).set()   # wake _await_ready
         elif target == "commander":

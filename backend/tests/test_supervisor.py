@@ -118,7 +118,8 @@ def test_reader_streams_log_frames(monkeypatch):
 
 def test_sitl_readiness_transitions(monkeypatch):
     hub = _Hub(); q = hub.sink()
-    lines = ["Startup script returned successfully"] * 4
+    # t1 prints fleet readiness to its own stdout; readiness is N/M, not per-instance markers.
+    lines = [f"[t1] {k}/4 drones fully started (waiting: {4 - k})..." for k in range(1, 5)]
     monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", _fake_exec_returning([lines]))
 
     async def body():
@@ -135,7 +136,7 @@ def test_sitl_readiness_transitions(monkeypatch):
 def test_sitl_failure_state(monkeypatch):
     hub = _Hub()
     monkeypatch.setattr(sup.asyncio, "create_subprocess_exec",
-                        _fake_exec_returning([["Startup script returned with return value: 1"]]))
+                        _fake_exec_returning([["[t1] 2/4 ready, 2 FAILED after 3 retries — check /tmp/px4_sitl_*.log"]]))
 
     async def body():
         s = Supervisor(root="/repo", app=hub)
@@ -202,7 +203,7 @@ def test_orchestrated_launch_sequence(monkeypatch):
     hub = _Hub(); q = hub.sink()
     # 1st spawn (sitl) emits 4 readiness lines; 2nd (commander) emits the bridge marker.
     monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", _fake_exec_returning([
-        ["Startup script returned successfully"] * 4,
+        ["[t1] 4/4 drones fully started (waiting: 0)..."],
         ["[web] SkyForge operator UI bridge on http://127.0.0.1:8799"],
     ]))
 
