@@ -2,7 +2,7 @@ import { useStore } from "../store";
 
 export default function StatusStrip() {
   const t = useStore((s) => s.telemetry);
-  const connected = useStore((s) => s.connected);
+  const connected = useStore((s) => s.bridgeConnected);
   const led = t?.led ?? [0, 0.8, 0];
   const swatch = `rgb(${led.map((c) => Math.round(c * 255)).join(",")})`;
   return (

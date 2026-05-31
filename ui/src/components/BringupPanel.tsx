@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { post, get, setBridgeBase } from "../api";
-import { connectWs } from "../store";
+import { post, get } from "../api";
+import { connectBridge } from "../store";
 
 // Compose the bring-up environment + spawn/track the stack via the gateway supervisor.
 const ARENAS = ["default", "walls", "windy", "frictionless", "forest", "baylands", "lawn", "aruco"];
@@ -27,11 +27,7 @@ export default function BringupPanel() {
 
   const spawn = async (target: string) => {
     const r = await post("/api/bringup", { target, n, arena, opts: { ...opts, web: target === "commander" } });
-    if (target === "commander" && r.port) {
-      // the live bridge is on its own port — point control + telemetry there
-      setBridgeBase(`http://${location.hostname}:${r.port}`);
-      connectWs();
-    }
+    if (target === "commander" && r.port) connectBridge(r.port);   // attach the live socket
     refresh();
   };
 

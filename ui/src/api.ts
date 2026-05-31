@@ -12,6 +12,21 @@ export function bridgeWsUrl(): string {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${location.host}/ws`;
 }
+// The gateway's always-on lifecycle socket is ALWAYS same-origin (never the bridge base).
+export function gatewayWsUrl(): string {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${location.host}/ws`;
+}
+
+// ── Supervisor (gateway, same-origin): spawn/track the runtime stack from the UI ──
+export interface LaunchOpts { gcs?: string; led?: string; blackbox?: string; autoabort?: boolean; [k: string]: unknown; }
+export async function launch(body: { n: number; arena: string; opts: LaunchOpts; mode?: string }): Promise<any> {
+  return post("/api/launch", body);            // one-click: backend sequences SITL → commander
+}
+export async function bringup(body: { target: string; n: number; arena: string; opts: LaunchOpts; mode?: string }): Promise<any> {
+  return post("/api/bringup", body);           // granular per-process spawn; mode: background|terminal
+}
+export async function teardown(): Promise<any> { return post("/api/teardown"); }
 
 // Single-writer command authority: when held, the token is sent with every control call.
 let cmdToken: string | null = null;

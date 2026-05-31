@@ -40,4 +40,26 @@ export interface CmdResult {
   verb: string;
 }
 
-export type Frame = TelemetryFrame | HealthFrame | (CmdResult & { type: "cmd_result" });
+// ── Bridge socket (the spawned commander's own port): telemetry / health / cmd_result ──
+export type BridgeFrame = TelemetryFrame | HealthFrame | (CmdResult & { type: "cmd_result" });
+export type Frame = BridgeFrame;                         // back-compat alias
+
+// ── Gateway socket (:8787, always on): process / log / readiness / lifecycle ──────────
+export type ProcState = "idle" | "starting" | "ready" | "running" | "exited" | "failed";
+
+export interface ProcInfo {
+  state: ProcState | string;
+  pid: number | null;
+  running: boolean;
+  code: number | null;
+  ready_n: number;
+  ready_of: number;
+}
+
+export interface ProcFrame      { type: "proc"; procs: Record<string, ProcInfo>; }
+export interface LogFrame       { type: "log"; target: string; line: string; t: number; }
+export interface ReadyFrame     { type: "ready"; target: string; n: number; of: number; }
+export interface LifecycleFrame { type: "lifecycle"; phase: string; msg: string; t: number; }
+export interface BringupFrame   { type: "bringup"; target: string; port: number; pid: number | null; }
+
+export type GatewayFrame = ProcFrame | LogFrame | ReadyFrame | LifecycleFrame | BringupFrame;
