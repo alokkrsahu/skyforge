@@ -15,7 +15,10 @@ export default function AuthorPanel() {
 
   useEffect(() => { get("/api/formations").then((r) => setCatalog(r.formations ?? [])); }, []);
   useEffect(() => {
-    post("/api/formations/preview", { spec, n: 24 }).then((r) => setPreview(r.ok ? r.points : []));
+    // 33 matches the designed art point-counts (cat 31 / swastika 33 / om 34) so the preview shows
+    // the full sculpture — every feature dot — instead of subsampling 33→24 and dropping an
+    // isolated point (which silently hid the swastika's bottom-right quadrant dot at n=24).
+    post("/api/formations/preview", { spec, n: 33 }).then((r) => setPreview(r.ok ? r.points : []));
   }, [spec]);
 
   const compile = async () => {

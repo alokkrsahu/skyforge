@@ -1,39 +1,39 @@
 # swastika — VOLUMETRIC 3D drone sculpture of the Hindu auspicious symbol (स्वस्तिक, clockwise
 # 卐), the sacred sign of well-being used in rangoli/Diwali. Designed in Blender (Swastika_
-# Formation) via MCP, front-reading in the East-Up plane with the four traditional quadrant dots
-# plus the central bindu. dN,dE,dU in metres (Blender +Y->North, +X->East, +Z->Up); centred
-# (N,E) + scaled at load. Domed OUTWARD — the centre bulges toward the viewer (convex, like the
-# cat), so the centre bindu reads as the forward-most point. dU>=0 rises from the base altitude.
--0.522,0,4
--0.986,0,5.25
--1.45,0,6.5
--1.916,0,7.75
--2.38,0,9
--1.916,0,10.25
--1.45,0,11.5
--0.986,0,12.75
--0.522,0,14
--0.522,-5,9
--0.986,-3.75,9
--1.45,-2.5,9
--1.916,-1.25,9
--1.916,1.25,9
--1.45,2.5,9
--0.986,3.75,9
--0.522,5,9
--0.457,1.333,14
--0.274,2.667,14
-0,4,14
--0.457,5,7.667
--0.274,5,6.333
-0,5,5
--0.457,-1.333,4
--0.274,-2.667,4
-0,-4,4
--0.457,-5,10.333
--0.274,-5,11.667
-0,-5,13
--1.119,2.4,11.4
--1.119,2.4,6.6
--1.119,-2.4,11.4
--1.119,-2.4,6.6
+# Formation) via MCP — 4-fold-symmetric pinwheel arms, the four traditional quadrant dots, and
+# the central bindu. dN,dE,dU in metres (Blender +Y->North, +X->East, +Z->Up); centred (N,E) +
+# scaled at load. Domed OUTWARD — the centre bulges toward the viewer (convex, like the cat), so
+# the central bindu is the forward-most point. dU>=0 rises from the base altitude.
+-2.6,0,9
+-2.117,0,10.25
+-2.117,0,7.75
+-2.117,1.25,9
+-2.117,-1.25,9
+-1.634,0,11.5
+-1.634,0,6.5
+-1.634,2.5,9
+-1.634,-2.5,9
+-1.151,0,12.75
+-1.151,0,5.25
+-1.151,3.75,9
+-1.151,-3.75,9
+-0.667,0,14
+-0.667,0,4
+-0.667,5,9
+-0.667,-5,9
+-0.582,1.5,14
+-0.346,3,14
+0,4.5,14
+-0.582,5,7.5
+-0.346,5,6
+0,5,4.5
+-0.582,-1.5,4
+-0.346,-3,4
+0,-4.5,4
+-0.582,-5,10.5
+-0.346,-5,12
+0,-5,13.5
+-1.179,2.6,11.6
+-1.179,2.6,6.4
+-1.179,-2.6,11.6
+-1.179,-2.6,6.4
