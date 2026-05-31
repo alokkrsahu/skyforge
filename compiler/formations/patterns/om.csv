@@ -1,0 +1,39 @@
+# om — VOLUMETRIC 3D drone sculpture of Om / Aum (ॐ, U+0950), the sacred syllable. The glyph
+# is sampled from the Devanagari font (Devanagari Sangam MN) in Blender (Om_Formation) via MCP:
+# its strokes are filled with drones, front-reading in the East-Up plane (bindu+crescent on top).
+# dN,dE,dU in metres (Blender +Y->North, +X->East, +Z->Up); centred (N,E) + scaled at load.
+# Gentle forward dome (dN) gives depth; dU>=0 rises from the base altitude.
+0.006,-3.34,3.547
+0.13,-2.247,3.547
+0.211,-1.154,3.547
+0.05,-4.433,4.64
+0.513,-0.061,4.64
+0.072,4.311,4.64
+0,-5.526,5.733
+0.785,-0.061,5.733
+0.457,3.218,5.733
+0.026,5.404,5.733
+0.12,-5.526,6.826
+1.058,-0.061,6.826
+1,1.032,6.826
+0.842,2.125,6.826
+0.148,5.404,6.826
+0.979,-2.247,7.919
+1.206,-1.154,7.919
+1.006,2.125,7.919
+0.226,5.404,7.919
+1.312,-1.154,9.012
+1.07,2.125,9.012
+0.798,3.218,9.012
+0.525,4.311,9.012
+0.253,5.404,9.012
+0.461,-4.433,10.105
+1.202,-1.154,10.105
+0.604,-3.34,11.198
+0.817,-2.247,11.198
+0.78,-0.061,12.291
+0.624,2.125,12.291
+0.453,3.218,12.291
+0.47,-1.154,13.384
+0.478,1.032,13.384
+0.211,1.032,14.477
