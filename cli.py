@@ -184,6 +184,62 @@ def cmd_energy(args: argparse.Namespace) -> int:
     return 0 if rep.fits else 1
 
 
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """Dry-run go/no-go: validate + battery + geodetic origin in one report (no flight)."""
+    _add_skyforge_to_path()
+    from core.show_format.reader import from_json, from_msgpack
+    from compiler.validator import ValidationConfig, validate
+    from compiler.energy import estimate_energy, EnergyModel
+
+    path = os.path.abspath(args.show)
+    if not os.path.isfile(path):
+        print(f"ERROR: file not found: {path}", file=sys.stderr)
+        return 1
+    show = from_json(path) if path.endswith(".json") else from_msgpack(path)
+
+    val = validate(show, ValidationConfig(min_sep_m=args.min_sep,
+                                          tracking_margin_m=args.tracking_margin))
+    eng = estimate_energy(show, EnergyModel(endurance_hover_s=args.endurance))
+
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime"))
+    try:
+        from show.geodetic import describe_origin
+        origin_desc = describe_origin(show.metadata.origin)
+    except Exception:
+        origin_desc = "(origin unavailable)"
+
+    print(f"Validation      : {'PASS' if val.passed else 'FAIL'}"
+          + ("" if val.passed else f"  ({len(val.errors)} error(s))"))
+    print(f"Battery         : {'OK' if eng.fits else 'OVER BUDGET'}  "
+          f"(worst ~{eng.max_used_frac:.0%} of a charge)")
+    print(f"Origin          : {origin_desc}")
+    print(f"Status          : {show.metadata.validation_status}")
+    ok = val.passed and eng.fits
+    print(f"\nGO / NO-GO      : {'GO' if ok else 'NO-GO'}")
+    return 0 if ok else 1
+
+
+def cmd_flightlog(args: argparse.Namespace) -> int:
+    """Post-flight summary of a black-box JSONL recording."""
+    _add_skyforge_to_path()
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime"))
+    from show.fleet_monitor import read_blackbox, summarize_log
+
+    path = os.path.abspath(args.log)
+    if not os.path.isfile(path):
+        print(f"ERROR: file not found: {path}", file=sys.stderr)
+        return 1
+    s = summarize_log(read_blackbox(path))
+    if not s.get("n_records"):
+        print("Empty / unreadable black-box log."); return 1
+    print(f"Records         : {s['n_records']}  over {s['duration_s']:.0f} s")
+    print(f"Max drones lost : {s['max_lost']}")
+    pe = s["max_pos_error_m"]; bat = s["min_battery_frac"]
+    print(f"Worst track err : {pe:.2f} m" if pe is not None else "Worst track err : n/a")
+    print(f"Lowest battery  : {bat:.0%}" if bat is not None else "Lowest battery  : n/a")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="skyforge",
@@ -230,13 +286,25 @@ def main() -> None:
     p.add_argument("--reserve", type=float, default=0.20, metavar="F",
                    help="Required landing reserve fraction (default: 0.20)")
 
+    # preflight — dry-run go/no-go (validate + battery + origin)
+    p = sub.add_parser("preflight", help="Dry-run readiness check (no flight)")
+    p.add_argument("show", help="Path to .skyforge or .skyforge.json")
+    p.add_argument("--min-sep", type=float, default=1.5, metavar="M")
+    p.add_argument("--tracking-margin", type=float, default=0.0, metavar="M")
+    p.add_argument("--endurance", type=float, default=600.0, metavar="S")
+
+    # flightlog — post-flight black-box summary
+    p = sub.add_parser("flightlog", help="Summarize a black-box JSONL recording")
+    p.add_argument("log", help="Path to the $SKYFORGE_BLACKBOX JSONL file")
+
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
         sys.exit(1)
 
     handlers = {"compile": cmd_compile, "validate": cmd_validate,
-                "info": cmd_info, "export": cmd_export, "energy": cmd_energy}
+                "info": cmd_info, "export": cmd_export, "energy": cmd_energy,
+                "preflight": cmd_preflight, "flightlog": cmd_flightlog}
     sys.exit(handlers[args.command](args))
 
 

@@ -82,3 +82,35 @@ class BlackBox:
     def record(self, obj: dict) -> None:
         with open(self.path, "a") as f:
             f.write(json.dumps(obj) + "\n")
+
+
+def summarize_log(records: list[dict]) -> dict:
+    """Roll a black-box recording (list of per-tick summary dicts) into a post-flight
+    report: worst loss, worst tracking error, lowest battery, span. Pure."""
+    if not records:
+        return {"n_records": 0}
+    errs = [r["max_pos_error_m"] for r in records if r.get("max_pos_error_m") is not None]
+    bats = [r["min_battery_frac"] for r in records if r.get("min_battery_frac") is not None]
+    ts   = [r["t"] for r in records if "t" in r]
+    return {
+        "n_records":        len(records),
+        "duration_s":       (max(ts) - min(ts)) if ts else 0.0,
+        "max_lost":         max((r.get("n_lost", 0) for r in records), default=0),
+        "max_pos_error_m":  max(errs) if errs else None,
+        "min_battery_frac": min(bats) if bats else None,
+    }
+
+
+def read_blackbox(path: str) -> list[dict]:
+    """Parse a JSONL black-box file into records (skips blank/garbled lines)."""
+    out = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return out

@@ -125,6 +125,33 @@ def test_export_bad_drone_returns_1(tmp_path):
     assert cli.cmd_export(argparse.Namespace(show=str(j), drone=99, all=False, output=str(tmp_path))) == 1
 
 
+def test_preflight_go_on_validated_show(tmp_path):
+    cli.cmd_compile(_compile_ns(DEMO, tmp_path))
+    j = tmp_path / "four_drone_demo.skyforge.json"
+    rc = cli.cmd_preflight(argparse.Namespace(show=str(j), min_sep=1.5,
+                                              tracking_margin=0.0, endurance=600.0))
+    assert rc == 0                                       # validated + fits battery → GO
+
+
+def test_preflight_nogo_over_battery_budget(tmp_path):
+    cli.cmd_compile(_compile_ns(DEMO, tmp_path))
+    j = tmp_path / "four_drone_demo.skyforge.json"
+    rc = cli.cmd_preflight(argparse.Namespace(show=str(j), min_sep=1.5,
+                                              tracking_margin=0.0, endurance=1.0))  # 1 s endurance
+    assert rc == 1                                       # battery NO-GO
+
+
+def test_flightlog_summary(tmp_path):
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(REPO, "runtime"))
+    from show.fleet_monitor import BlackBox
+    log = tmp_path / "bb.jsonl"
+    bb = BlackBox(str(log))
+    bb.record({"t": 0.0, "n_lost": 0, "max_pos_error_m": 0.5, "min_battery_frac": 0.9})
+    bb.record({"t": 2.0, "n_lost": 1, "max_pos_error_m": 1.2, "min_battery_frac": 0.7})
+    assert cli.cmd_flightlog(argparse.Namespace(log=str(log))) == 0
+
+
 def test_info_prints_metadata(tmp_path, capsys):
     cli.cmd_compile(_compile_ns(DEMO, tmp_path))
     j = tmp_path / "four_drone_demo.skyforge.json"

@@ -138,6 +138,9 @@ back into validation.
 **Blender → formation is ad-hoc** (manual via MCP) — no packaged export add-on/pipeline. No
 timeline/choreography editor, limited music-sync authoring (beat detection is basic), no full-show
 **3D preview** before flight.
+> **Status:** ◑ Blender→formation workflow is documented (`compiler/formations/patterns/README.md`,
+> data-pattern CSV/JSON incl. volumetric `dU`). Remaining: a packaged Blender add-on, timeline
+> editor, and a full-show 3D preview.
 
 ### 12. Validation realism — 🟡
 The validator is **offline/static** and deconfliction can still **diverge on very dense fields**
@@ -151,6 +154,10 @@ model; APF is a reactive backstop, not a primary guarantee.
 ### 13. Regulatory & operational — 🟢
 No flight-log export for compliance, no airspace/NOTAM hooks, no rehearsal/dry-run mode distinct from
 the live arming path, no operator console/runbook.
+> **Status:** ◑ `skyforge preflight` (dry-run go/no-go: validate + battery + origin, no flight),
+> `skyforge flightlog` (post-flight black-box summary), and an operator runbook
+> ([RUNBOOK.md](RUNBOOK.md)) landed (`tests/unit/test_fleet_monitor.py`, `tests/integration/test_cli.py`).
+> Remaining: airspace/NOTAM integration + a graphical operator console.
 
 ---
 
