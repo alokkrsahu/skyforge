@@ -272,7 +272,11 @@ class DynamicRuntime:
             start_pos  = start_pos,
             end_pos    = end_pos,
             start_time = now if start_at is None else start_at,
-            duration_s = duration_s,
+            # Clamp away from zero: target_ned/peek_target divide by duration_s, so a
+            # transition_s of 0 (a UI/API client can request it) would make the snapshot
+            # path raise ZeroDivisionError and kill the telemetry WS. A floor of 50 ms is
+            # effectively "instant" for a move while keeping the easing math safe.
+            duration_s = max(float(duration_s), 0.05),
         )
         self.hold_pos.update(end_pos)
 

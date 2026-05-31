@@ -98,6 +98,15 @@ def test_status_text_endpoint():
     assert "Fleet:" in c.get("/api/status").json()["text"]
 
 
+def test_zero_transition_does_not_crash_snapshot():
+    # transition_s:0 must not make peek_target/snapshot raise ZeroDivisionError.
+    c, _ = _client(n=4, airborne=True)
+    r = c.post("/api/cmd/move", json={"dN": 5.0, "dE": 0.0, "transition_s": 0.0}).json()
+    assert r["ok"] is True
+    snap = c.get("/api/snapshot").json()            # the path that used to crash
+    assert len(snap["drones"]) == 4 and snap["drones"][0]["target"] is not None
+
+
 # ── single-writer command lock ───────────────────────────────────────────────
 
 def test_command_lock_enforced_except_abort():
