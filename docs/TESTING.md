@@ -125,6 +125,12 @@ hosts/instances with the *same* epoch to see them start in lockstep). Unset → 
 config. Then verify the autonomous net (best on a board / HITL): breach the geofence → drone
 Holds/RTLs; kill the offboard link → PX4 acts per `COM_OBL_ACT`. Unset → PX4 left untouched.
 
+**Upload-and-go agents (ROADMAP #1).** `./t1_sitl.sh 4` (≥4 PX4 instances), compile a 4-drone show,
+then `./t8_agents.sh <show.skyforge.json> 4` → **Pass:** 4 independent `onboard_agent.py` processes
+each connect their own PX4 instance, hold, and begin the show **together** at the shared
+`SKYFORGE_T0_EPOCH` (~15 s) — no central setpoint stream. (This is the model that scales to
+thousands; on hardware each agent runs on the drone's companion computer.)
+
 ## Manual — real hardware (deferred; needs a board)
 
 Follow `docs/HITL.md` then `docs/HARDWARE.md`. Order: real MAVLink link (`serial://`/`udp://`) →

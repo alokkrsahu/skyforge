@@ -36,10 +36,14 @@ link each). Fine for SITL/HITL/tens of drones; **won't scale** past dozens (host
 process count). **Missing:** *upload-and-go autonomy* — an **onboard agent** that executes the
 compiled `trajectory[i]` from the drone itself, with the ground station only broadcasting
 start/pause/abort and monitoring. This is the central architectural gap for hundreds/thousands.
-> **Status:** ◑ foundation — **per-drone trajectory slice export** landed: `skyforge export <show>
-> (--drone N | --all)` writes a valid 1-drone ShowFile per drone (`single_drone_show`/
-> `to_json_trajectory` in `core/show_format/writer.py`, `tests/integration/test_cli.py`). Next: the
-> on-board **agent** that flies a slice (build item 7, gets a design re-plan first).
+> **Status:** ◑ SITL PoC landed. (1) **Trajectory slice export** — `skyforge export <show>
+> (--drone N | --all)` writes a valid 1-drone ShowFile per drone (`core/show_format/writer.py`).
+> (2) **On-board agent** — `runtime/agent/onboard_agent.py` flies one slice autonomously on its own
+> PX4 instance, T0-synced via `SKYFORGE_T0_EPOCH`; `t8_agents.sh` launches N agents (one per
+> instance) — the upload-and-go control model (GCS only sets start/abort + monitors; no per-host
+> setpoint stream). Pure control law unit-tested (`tests/unit/test_onboard_agent.py`); reuses the
+> player's connect + `run_drone_skyforge`. **DEFERRED (hardware):** real companion-computer
+> deployment, a broadcast start/abort channel, and RF.
 
 ### 2. Positioning & geodetic origin — 🔴
 **Local NED only — no geodetic origin** (`VenueOrigin` schema field exists but is unused); no common
