@@ -96,3 +96,19 @@ def test_formation_runs_when_airborne():
 def test_status_text_endpoint():
     c, _ = _client()
     assert "Fleet:" in c.get("/api/status").json()["text"]
+
+
+# ── single-writer command lock ───────────────────────────────────────────────
+
+def test_command_lock_enforced_except_abort():
+    c, _ = _client(airborne=True)
+    tok = c.post("/api/command/acquire").json()["token"]
+    # without the token, a mutating verb is locked out (409)...
+    r = c.post("/api/cmd/hover")
+    assert r.status_code == 409 and r.json()["guard"] is True
+    # ...with the token it runs...
+    assert c.post("/api/cmd/hover", headers={"x-command-token": tok}).json()["ok"] is True
+    # ...and abort/E-STOP is NEVER lockable.
+    assert c.post("/api/cmd/abort").json()["status"].startswith("ABORT")
+    c.post("/api/command/release")
+    assert c.post("/api/cmd/hover").json()["ok"] is True   # open again after release

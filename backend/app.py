@@ -15,8 +15,10 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from .offline import register_offline
+from .supervisor import register_supervisor
 from .control import _mount_ui
 
 app = FastAPI(title="SkyForge Operator UI — gateway")
 register_offline(app)
+register_supervisor(app)
 _mount_ui(app)

@@ -14,8 +14,11 @@ from .control import build_app
 
 
 async def serve_web(commander, runtime, abort_event, health_q=None,
-                    host: str = "127.0.0.1", port: int = 8787) -> None:
+                    host: str = "127.0.0.1", port: int | None = None) -> None:
+    import os
     import uvicorn
+    if port is None:                                   # gateway spawns on an internal port
+        port = int(os.environ.get("SKYFORGE_WEB_PORT", "8787"))
     app    = build_app(commander, runtime, abort_event, health_q)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning",
                             loop="none", lifespan="off")

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { postCmd } from "../api";
+import { postCmd, acquireCommand, releaseCommand, hasCommand } from "../api";
 import { useStore } from "../store";
 
 const COLORS = ["red", "green", "blue", "white", "off", "orange", "purple", "cyan", "yellow", "pink"];
@@ -11,11 +11,18 @@ export default function CommandDeck() {
   const [spec, setSpec] = useState("circle");
   const [trans, setTrans] = useState(6);
   const [dist, setDist] = useState(5);
+  const [cmd, setCmd] = useState(hasCommand());
 
   const g = (extra = "") => (airborne ? "" : `disabled${extra}`);
 
   return (
     <div className="deck">
+      <div className="row">
+        <button onClick={async () => { cmd ? await releaseCommand() : await acquireCommand(); setCmd(hasCommand()); }}>
+          {cmd ? "Release command" : "Take command"}
+        </button>
+        <span className="hint">{cmd ? "you hold command authority" : "single-writer lock (optional)"}</span>
+      </div>
       <h3>Flight</h3>
       <div className="row">
         <button onClick={() => postCmd("takeoff", { altitude_m: alt })}>Takeoff</button>

@@ -159,11 +159,13 @@ the live arming path, no operator console/runbook.
 > ([RUNBOOK.md](RUNBOOK.md)) landed (`tests/unit/test_fleet_monitor.py`, `tests/integration/test_cli.py`).
 > **Graphical operator console** now in progress — `backend/` (in-loop FastAPI bridge: REST control
 > + telemetry/health/cmd_result WebSocket, gated by `SKYFORGE_WEB`) + `ui/` (React+three.js SPA: live
-> 3D fleet view, command deck, emergency rail). Phases 0–2 landed: bridge + MVP fly page +
-> **offline plane** (gateway `backend/app.py` wrapping compile/validate/info/energy/preflight/export +
-> formation catalog/preview) with the **lifecycle rail + arm-gate** (Fly locked until preflight=GO) and
-> a bring-up env form. See `docs/RUNBOOK.md`/`ui/README.md`. Remaining: health dashboard, flight-log
-> replay, gateway-spawns-commander split (Phase 3), scale paths + multi-operator (Phase 4); airspace/NOTAM.
+> 3D fleet view, command deck, emergency rail). Full 6-step lifecycle landed (Author→Preflight→
+> Bring-up→Fly→Monitor→Review): in-loop bridge, offline plane + arm-gate, monitor dashboard,
+> flight-log review, a **process supervisor** (gateway spawns/tracks t1/t6/t8 + ordered teardown),
+> and a **single-writer command lock** (E-STOP never lockable). 24 backend tests; see
+> `ui/README.md`/`docs/RUNBOOK.md`. Remaining (deferred): a WS reverse-proxy for true single-origin,
+> a 3D black-box replay scrubber, dedicated player/agents reduced-control screens, and airspace/NOTAM.
+> The live spawn path is SITL-verified manually (hermetic tests cover the logic).
 
 ---
 

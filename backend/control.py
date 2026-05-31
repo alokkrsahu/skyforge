@@ -11,9 +11,12 @@ lock). Every verb returns one human `str`; `classify()` turns it into a tri-stat
 from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 # Guard substrings (amber): the verb declined due to a precondition, not an error.
@@ -93,6 +96,32 @@ def register_control(app: FastAPI) -> None:
     @app.get("/api/snapshot")
     async def snapshot():               return await cmd().snapshot()
 
+    # Single-writer command authority: one operator "takes command"; while a token is
+    # held, mutating /api/cmd/* require it — EXCEPT abort (E-STOP is never lockable).
+    @app.post("/api/command/acquire")
+    async def acquire():
+        app.state.command_token = secrets.token_hex(8)
+        return {"token": app.state.command_token}
+
+    @app.post("/api/command/release")
+    async def release():
+        app.state.command_token = None
+        return {"ok": True}
+
+
+def register_command_lock(app: FastAPI) -> None:
+    @app.middleware("http")
+    async def lock(request: Request, call_next):
+        path = request.url.path
+        if path.startswith("/api/cmd/") and not path.endswith("/abort"):
+            tok = getattr(app.state, "command_token", None)
+            if tok is not None and request.headers.get("x-command-token") != tok:
+                verb = path.rsplit("/", 1)[-1]
+                return JSONResponse(status_code=409, content={
+                    "ok": False, "guard": True, "verb": verb,
+                    "status": "another operator holds command (take command to fly)"})
+        return await call_next(request)
+
 
 def register_ws(app: FastAPI) -> None:
     @app.websocket("/ws")
@@ -121,7 +150,12 @@ def build_app(commander, runtime, abort_event, health_q=None) -> FastAPI:
     app.state.runtime     = runtime
     app.state.abort_event = abort_event
     app.state.health_q    = health_q
-    app.state.cmd_q       = asyncio.Queue(maxsize=64)   # cmd_result echo stream
+    app.state.cmd_q        = asyncio.Queue(maxsize=64)  # cmd_result echo stream
+    app.state.command_token = None                       # single-writer lock (None = open)
+    # Loopback CORS so the UI served by the gateway can reach this bridge on its own port.
+    app.add_middleware(CORSMiddleware, allow_origin_regex=r"http://(127\.0\.0\.1|localhost)(:\d+)?",
+                       allow_methods=["*"], allow_headers=["*"])
+    register_command_lock(app)
     register_control(app)
     register_ws(app)
     from .offline import register_offline               # offline plane available live too
