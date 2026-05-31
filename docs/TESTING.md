@@ -114,6 +114,11 @@ these confirm behaviour on a running fleet).
   survivors keep flying the formation (the lost drone drops out of APF/sync, no ghost chase).
 - `SKYFORGE_FAIL_MODE=abort ./t6_commander.sh N` → **Pass:** the same loss triggers a fleet emergency land.
 
+**Shared-T0 start (ROADMAP #3).** Pin the player to an absolute instant:
+`SKYFORGE_T0_EPOCH=$(python3 -c 'import time;print(time.time()+30)') ./t5_skyforge.sh <show>` →
+**Pass:** all drones hold at the takeoff pose and begin the polynomial together at that epoch (run two
+hosts/instances with the *same* epoch to see them start in lockstep). Unset → starts when last-ready.
+
 ## Manual — real hardware (deferred; needs a board)
 
 Follow `docs/HITL.md` then `docs/HARDWARE.md`. Order: real MAVLink link (`serial://`/`udp://`) →

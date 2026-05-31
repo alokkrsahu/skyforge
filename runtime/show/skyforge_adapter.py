@@ -265,9 +265,17 @@ async def run_drone_skyforge(
 
     if ready_count[0] >= target:
         # Last drone ready: record shared start time and fire the event.
-        show_start_time[0] = time.monotonic() - TAKEOFF_OFFSET_S
+        # If SKYFORGE_T0_EPOCH is set, pin the show start to that absolute instant so
+        # several ground hosts / on-board agents begin together; else start now.
+        from show.time_sync import resolve_t0_epoch
+        t0 = resolve_t0_epoch()
+        if t0 is not None:
+            show_start_time[0] = t0 - TAKEOFF_OFFSET_S
+            print(f"[skyforge] All drones ready — show pinned to SKYFORGE_T0_EPOCH")
+        else:
+            show_start_time[0] = time.monotonic() - TAKEOFF_OFFSET_S
+            print("[skyforge] All drones ready — polynomial show starting")
         show_start_event.set()
-        print("[skyforge] All drones ready — polynomial show starting")
     else:
         # Wait for show start or abort signal (120 s safety timeout).
         show_fut  = asyncio.ensure_future(show_start_event.wait())

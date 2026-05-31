@@ -185,7 +185,9 @@ class DynamicRuntime:
         if self.transition is None:
             return self.hold_pos[drone_id]
         t     = self.transition
-        alpha = min(1.0, (now - t.start_time) / t.duration_s)
+        # Clamp to [0,1]: alpha<0 (a scheduled future start_time) holds at start_pos
+        # until T0; alpha>1 holds at end_pos.
+        alpha = max(0.0, min(1.0, (now - t.start_time) / t.duration_s))
         alpha = _ease_inout(alpha)
         s     = t.start_pos[drone_id]
         e     = t.end_pos[drone_id]
@@ -202,7 +204,11 @@ class DynamicRuntime:
         self,
         end_pos:    dict[int, tuple[float, float, float]],
         duration_s: float,
+        start_at:   Optional[float] = None,
     ) -> None:
+        """Begin a move. ``start_at`` (a ``time.monotonic()`` deadline) schedules a
+        SYNCHRONIZED future start — drones hold at start_pos until then, so multiple
+        controllers/agents fed the same T0 begin as one. Default = start now."""
         now       = time.monotonic()
         start_pos = {}
         for i in range(self.n_drones):
@@ -213,7 +219,7 @@ class DynamicRuntime:
         self.transition = Transition(
             start_pos  = start_pos,
             end_pos    = end_pos,
-            start_time = now,
+            start_time = now if start_at is None else start_at,
             duration_s = duration_s,
         )
         self.hold_pos.update(end_pos)

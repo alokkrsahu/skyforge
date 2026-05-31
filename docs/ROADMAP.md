@@ -45,6 +45,11 @@ against the 1.5 m collision margin. (Documented in [HARDWARE.md](HARDWARE.md).)
 ### 3. Time synchronization — 🔴
 **No GPS/PPS shared T0** — drones can't all start the same trajectory at the same instant. Without it
 the show desyncs and the collision guarantees (which assume one shared clock) no longer hold.
+> **Status:** ◑ software foundation landed — `runtime/show/time_sync.py` maps an absolute UNIX/GPS
+> epoch to the local monotonic clock; the player pins show-start to `SKYFORGE_T0_EPOCH` when set, and
+> `start_transition(start_at=…)` schedules a synchronized future move (drones hold at start_pos until
+> T0) (`tests/unit/test_time_sync.py`). **DEFERRED (hardware):** a real GPS/PPS source replacing
+> `time.time()` + sub-ms drift compensation.
 
 ### 4. On-vehicle safety & fleet emergency — 🔴
 Skyforge ships **no failsafes** — geofence / RTL / battery / RC-loss / kill all live on PX4 and must be
