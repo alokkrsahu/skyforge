@@ -75,6 +75,16 @@ def test_rtl_returns_home_then_lands():
     asyncio.run(body())
 
 
+def test_v_formation_not_shadowed_by_text_in_api_path():
+    cmd, rt = _cmd()
+    # 'v' is a real formation (v_shape alias) — must NOT be rewritten to text:V
+    msg = asyncio.run(cmd.formation("v"))
+    assert "'v'" in msg and "text" not in msg.lower()
+    # a non-formation letter is still sugar for text
+    msg2 = asyncio.run(cmd.formation("A"))
+    assert "text:A" in msg2
+
+
 def test_rtl_noop_when_not_airborne():
     cmd, rt = _cmd()
     rt.airborne = False

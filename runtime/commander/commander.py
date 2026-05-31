@@ -12,7 +12,7 @@ import time
 from typing import Union
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from compiler.formations import get_formation
+from compiler.formations import get_formation, list_formations
 from compiler.assignment import assign_nocross
 
 from .dynamic_adapter import DynamicRuntime
@@ -139,7 +139,10 @@ class FleetCommander:
             return (f"Drones not airborne yet ({n_ready} in offboard, waiting for sync). "
                     f"Type 'status' to check, or wait for '[commander] All drones in offboard'.")
 
-        if len(spec) == 1 and spec.isalpha():
+        # Single capital letter = sugar for text:<letter> — but NOT if that letter is a real
+        # registered formation (e.g. 'v' = the v_shape alias). The REPL guards this before
+        # dispatch; the API/web path calls formation() directly, so guard it here too.
+        if len(spec) == 1 and spec.isalpha() and spec.lower() not in list_formations():
             spec = f"text:{spec.upper()}"
 
         try:
