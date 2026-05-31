@@ -99,6 +99,32 @@ def test_validate_missing_file_returns_1(tmp_path):
 
 # ── info ─────────────────────────────────────────────────────────────────────────
 
+def test_export_single_drone_slice(tmp_path):
+    cli.cmd_compile(_compile_ns(DEMO, tmp_path))
+    j = tmp_path / "four_drone_demo.skyforge.json"
+    rc = cli.cmd_export(argparse.Namespace(show=str(j), drone=0, all=False, output=str(tmp_path)))
+    assert rc == 0
+    slice_path = tmp_path / "four_drone_demo.drone000.skyforge.json"
+    assert slice_path.exists()
+    sf = from_json(str(slice_path))                      # round-trips reader validation
+    assert sf.metadata.n_drones == 1 and len(sf.trajectories) == 1
+
+
+def test_export_all_slices(tmp_path):
+    cli.cmd_compile(_compile_ns(DEMO, tmp_path))
+    j = tmp_path / "four_drone_demo.skyforge.json"
+    n = from_json(str(j)).metadata.n_drones
+    rc = cli.cmd_export(argparse.Namespace(show=str(j), drone=None, all=True, output=str(tmp_path)))
+    assert rc == 0
+    assert all((tmp_path / f"four_drone_demo.drone{i:03d}.skyforge.json").exists() for i in range(n))
+
+
+def test_export_bad_drone_returns_1(tmp_path):
+    cli.cmd_compile(_compile_ns(DEMO, tmp_path))
+    j = tmp_path / "four_drone_demo.skyforge.json"
+    assert cli.cmd_export(argparse.Namespace(show=str(j), drone=99, all=False, output=str(tmp_path))) == 1
+
+
 def test_info_prints_metadata(tmp_path, capsys):
     cli.cmd_compile(_compile_ns(DEMO, tmp_path))
     j = tmp_path / "four_drone_demo.skyforge.json"

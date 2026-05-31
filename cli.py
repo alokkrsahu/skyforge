@@ -135,6 +135,34 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def cmd_export(args: argparse.Namespace) -> int:
+    _add_skyforge_to_path()
+    from core.show_format.reader import from_json, from_msgpack
+    from core.show_format.writer import to_json_trajectory
+
+    path = os.path.abspath(args.show)
+    if not os.path.isfile(path):
+        print(f"ERROR: file not found: {path}", file=sys.stderr)
+        return 1
+
+    show = from_json(path) if path.endswith(".json") else from_msgpack(path)
+    n    = show.metadata.n_drones
+    if args.all:
+        ids = list(range(n))
+    elif args.drone is not None and 0 <= args.drone < n:
+        ids = [args.drone]
+    else:
+        print(f"ERROR: pass --all or --drone N with 0 <= N < {n}", file=sys.stderr)
+        return 1
+
+    out_dir = os.path.abspath(args.output) if args.output else os.path.dirname(path)
+    base    = os.path.basename(path).split(".skyforge")[0]
+    for i in ids:
+        to_json_trajectory(show, i, os.path.join(out_dir, f"{base}.drone{i:03d}.skyforge.json"))
+    print(f"[skyforge] Exported {len(ids)} trajectory slice(s) → {out_dir}")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="skyforge",
@@ -161,12 +189,21 @@ def main() -> None:
     p = sub.add_parser("info", help="Print show metadata")
     p.add_argument("show", help="Path to .skyforge or .skyforge.json")
 
+    # export — per-drone trajectory slices (upload-and-go foundation)
+    p = sub.add_parser("export", help="Export per-drone trajectory slices to JSON")
+    p.add_argument("show", help="Path to .skyforge or .skyforge.json")
+    p.add_argument("--drone", type=int, default=None, metavar="N", help="Export only drone N")
+    p.add_argument("--all", action="store_true", help="Export every drone's slice")
+    p.add_argument("-o", "--output", default=None, metavar="DIR",
+                   help="Output directory (default: same as the show)")
+
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
         sys.exit(1)
 
-    handlers = {"compile": cmd_compile, "validate": cmd_validate, "info": cmd_info}
+    handlers = {"compile": cmd_compile, "validate": cmd_validate,
+                "info": cmd_info, "export": cmd_export}
     sys.exit(handlers[args.command](args))
 
 
