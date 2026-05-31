@@ -97,6 +97,17 @@ beacon and behaves exactly as before. Same `SKYFORGE_GCS=qgc` knob applies to th
 hardware. *(If arm is denied even with QGC up, that's the documented fallback: keep the beacon and
 attach QGC via a MAVLink router.)*
 
+## Manual — roadmap features (SITL)
+
+Live checks for features built per `docs/ROADMAP.md` (automated logic is pinned by the unit suite;
+these confirm behaviour on a running fleet).
+
+**Fleet emergency commands (ROADMAP #4).** `./t1_sitl.sh 4` → `./t6_commander.sh 4` → `takeoff` → `circle`, then:
+- `hold` (or `hover`) mid-transition → **Pass:** the fleet freezes in place immediately.
+- `rtl` → **Pass:** all drones fly back over their home XY at cruise altitude, then land (staggered).
+- `land now` → **Pass:** immediate descent (no per-drone stagger). `land` alone staggers.
+- `estop` (alias of `abort`) → **Pass:** immediate land, no stagger.
+
 ## Manual — real hardware (deferred; needs a board)
 
 Follow `docs/HITL.md` then `docs/HARDWARE.md`. Order: real MAVLink link (`serial://`/`udp://`) →

@@ -5,6 +5,7 @@ Each public method is an async coroutine returning a str status message.
 Methods are intentionally MCP-tool-ready: typed params, docstrings, no
 side-channel dependencies beyond DynamicRuntime.
 """
+import asyncio
 import os
 import sys
 import time
@@ -88,6 +89,28 @@ class FleetCommander:
         self.runtime.abort_flag = True
         self.runtime.airborne   = False
         return "ABORT — emergency landing"
+
+    async def rtl(self, transition_s: float = 8.0) -> str:
+        """Return-to-launch: fly the whole fleet back to its home XY (at cruise
+        altitude) over transition_s, then land. Reuses the planned transition
+        (start_transition → crossing-free interpolation) and the existing staggered
+        land path, so no in-flight surgery is needed — it's a coordinated, recoverable
+        emergency, unlike `abort` (drop where you are) or `land` (down in place)."""
+        rt = self.runtime
+        if not rt.airborne:
+            return "Drones not airborne"
+        end_pos = {
+            i: (rt.home_ned[i][0], rt.home_ned[i][1], -rt.alt_m)
+            for i in range(rt.n_drones)
+        }
+        rt.start_transition(end_pos, transition_s)
+
+        async def _land_after_return() -> None:
+            await asyncio.sleep(transition_s)
+            rt.airborne = False   # each drone coroutine then lands (staggered)
+
+        asyncio.create_task(_land_after_return())
+        return f"RTL — returning to launch over {transition_s:.1f} s, then landing"
 
     # ── Formation control ─────────────────────────────────────────────────────
 

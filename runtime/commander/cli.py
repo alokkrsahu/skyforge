@@ -12,9 +12,10 @@ from compiler.formations import list_formations
 HELP = """\
 Commands:
   takeoff [alt]          — arm and ascend (default 5.0 m)
-  land                   — staggered descent and disarm
-  abort                  — emergency immediate land (no stagger)
-  hover                  — cancel transition, hold in place
+  land [now]             — staggered descent and disarm ('now' = immediate)
+  hover / hold           — freeze the fleet in place (cancel any transition)
+  rtl [s]               — return the fleet to launch, then land (coordinated)
+  abort / estop          — emergency immediate land (no stagger, drop in place)
 
   circle                 — equally-spaced ring
   grid                   — rectangular grid
@@ -71,13 +72,19 @@ async def _dispatch(line: str, cmd: FleetCommander) -> str | None:
         return await cmd.takeoff(alt)
 
     if verb == "land":
-        return await cmd.land()
+        # 'land now' / 'land immediate' → no stagger; 'land' / 'land all' → staggered
+        immediate = len(parts) > 1 and parts[1].lower() in ("now", "immediate", "immediately")
+        return await cmd.land(stagger=not immediate)
 
-    if verb == "abort":
+    if verb in ("abort", "estop"):
         return await cmd.abort()
 
-    if verb == "hover":
+    if verb in ("hover", "hold"):
         return await cmd.hover()
+
+    if verb in ("rtl", "return"):
+        t = float(parts[1]) if len(parts) > 1 else 8.0
+        return await cmd.rtl(t)
 
     if verb == "status":
         return await cmd.status()

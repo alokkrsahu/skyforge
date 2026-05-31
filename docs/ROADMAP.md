@@ -51,6 +51,10 @@ Skyforge ships **no failsafes** — geofence / RTL / battery / RC-loss / kill al
 hand-configured per vehicle (documented gap). **Missing:** auto-geofence generation from the show
 envelope, automated failsafe provisioning, and a **fleet-wide emergency** (one "ALL HOLD / ALL LAND /
 ALL RTL" broadcast). Today `abort()`/`land()`/`hover()` require a live link and act per drone.
+> **Status:** ✅ commander fleet-emergency verbs landed — `hold`/`hover`, `land [now]`, `rtl`
+> (return-to-launch then land), `estop`/`abort` (`runtime/commander/{commander,cli}.py`,
+> `tests/unit/test_commander_emergency.py`). Remaining here: auto-geofence + failsafe provisioning
+> (roadmap build item 4) and a true link-independent broadcast (item 13 / DEFERRED hardware).
 
 ### 5. Comms / link layer — 🔴 / 🟡
 **No telemetry-radio / WiFi-mesh / broadcast integration** — assumes localhost/private net. No
