@@ -9,6 +9,7 @@ runtime), so it mounts on BOTH the always-up gateway and the live bridge app.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import io
 import os
@@ -43,7 +44,12 @@ class PreviewReq(BaseModel): spec: str; n: int = 16; min_spacing_m: float = 3.0;
 class FlightlogReq(BaseModel): log: str
 
 
-def register_offline(app: FastAPI) -> None:
+def register_offline(app: FastAPI, heavy: bool = True) -> None:
+    """Mount the offline plane. The formation catalog/preview are CHEAP + pure and safe
+    on the live flight loop, so build_app registers them with heavy=False. The CPU-bound
+    handlers (compile/validate/preflight/…) are gateway-only (heavy=True) and run in a
+    worker thread via asyncio.to_thread so a ~1 s compile never blocks the event loop —
+    and they are NOT mounted on the live bridge (they redirect process-global stdout)."""
     import cli
     from compiler.formations import list_formations, get_formation
 
@@ -60,34 +66,40 @@ def register_offline(app: FastAPI) -> None:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
+    if not heavy:
+        return
+
     @app.post("/api/compile")
     async def compile_show(b: ScriptReq):
-        return _run(cli.cmd_compile, script=b.script, output=b.output,
+        return await asyncio.to_thread(_run, cli.cmd_compile, script=b.script, output=b.output,
                     min_sep=b.min_sep, tracking_margin=b.tracking_margin, no_validate=b.no_validate)
 
     @app.post("/api/validate")
     async def validate_show(b: ShowReq):
-        return _run(cli.cmd_validate, show=b.show, min_sep=b.min_sep, tracking_margin=b.tracking_margin)
+        return await asyncio.to_thread(_run, cli.cmd_validate, show=b.show,
+                    min_sep=b.min_sep, tracking_margin=b.tracking_margin)
 
     @app.post("/api/info")
     async def info_show(b: ShowReq):
-        return _run(cli.cmd_info, show=b.show)
+        return await asyncio.to_thread(_run, cli.cmd_info, show=b.show)
 
     @app.post("/api/energy")
     async def energy_show(b: EnergyReq):
-        return _run(cli.cmd_energy, show=b.show, endurance=b.endurance, reserve=b.reserve)
+        return await asyncio.to_thread(_run, cli.cmd_energy, show=b.show,
+                    endurance=b.endurance, reserve=b.reserve)
 
     @app.post("/api/preflight")
     async def preflight_show(b: PreflightReq):
-        r = _run(cli.cmd_preflight, show=b.show, min_sep=b.min_sep,
+        r = await asyncio.to_thread(_run, cli.cmd_preflight, show=b.show, min_sep=b.min_sep,
                  tracking_margin=b.tracking_margin, endurance=b.endurance)
         r["verdict"] = "GO" if r["exit"] == 0 else "NO-GO"     # the arm gate
         return r
 
     @app.post("/api/export")
     async def export_show(b: ExportReq):
-        return _run(cli.cmd_export, show=b.show, drone=b.drone, all=b.all, output=b.output)
+        return await asyncio.to_thread(_run, cli.cmd_export, show=b.show,
+                    drone=b.drone, all=b.all, output=b.output)
 
     @app.post("/api/flightlog")
     async def flightlog(b: FlightlogReq):
-        return _run(cli.cmd_flightlog, log=b.log)
+        return await asyncio.to_thread(_run, cli.cmd_flightlog, log=b.log)

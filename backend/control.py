@@ -162,8 +162,8 @@ def build_app(commander, runtime, abort_event, health_q=None) -> FastAPI:
     register_command_lock(app)
     register_control(app)
     register_ws(app)
-    from .offline import register_offline               # offline plane available live too
-    register_offline(app)
+    from .offline import register_offline               # only the CHEAP formation catalog
+    register_offline(app, heavy=False)                  # live; compile/preflight stay on the gateway
     _mount_ui(app)
     return app
 
