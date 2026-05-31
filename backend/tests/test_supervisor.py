@@ -1,6 +1,9 @@
 """
-Supervisor core (hermetic): env composition, the SITL readiness parser, launch argv, and
-ordered teardown with a fake subprocess. Live spawning needs PX4 (verified manually).
+Supervisor core (hermetic): env composition, the SITL readiness parser, launch argv, output
+capture + log streaming, the per-process state machine, and ordered teardown with reader
+cancellation — all with a fake subprocess that models a long-running process (stdout stays
+open until the process is stopped, like t1's blocking `wait`). Live spawning needs PX4 and is
+verified manually.
 """
 import asyncio
 import os
@@ -13,6 +16,57 @@ import backend.supervisor as sup
 from backend.supervisor import compose_env, parse_sitl_ready, launch_argv, Supervisor, LAUNCHERS
 
 
+# ── A fake subprocess: yields canned stdout lines, then keeps the pipe open (blocking on
+#    readline) until the process is signalled — mirroring a real long-running launcher. ──
+class _FakeStdout:
+    def __init__(self, proc, lines): self._proc = proc; self._lines = list(lines)
+    async def readline(self):
+        if self._lines:
+            return (self._lines.pop(0) + "\n").encode()
+        await self._proc._dead.wait()                 # pipe stays open until the proc dies
+        return b""
+
+class _FakeProc:
+    _n = 0
+    def __init__(self, lines=()):
+        _FakeProc._n += 1
+        self.pid = 4000 + _FakeProc._n
+        self.returncode = None
+        self.signals = []
+        self._dead = asyncio.Event()
+        self.stdout = _FakeStdout(self, lines)
+    def send_signal(self, s): self.signals.append(s); self.returncode = -int(s); self._dead.set()
+    async def wait(self):                             # returns immediately (short procs like pkill);
+        return self.returncode if self.returncode is not None else 0   # long-running is modeled by
+    def kill(self): self.returncode = -9; self._dead.set()             # readline blocking on _dead
+
+
+class _Hub:
+    """Minimal FastAPI-app stand-in: just app.state.subscribers (a set of frame queues)."""
+    def __init__(self):
+        self.state = type("S", (), {})()
+        self.state.subscribers = set()
+    def sink(self) -> asyncio.Queue:
+        q = asyncio.Queue(); self.state.subscribers.add(q); return q
+
+
+def _drain(q: asyncio.Queue, typ=None) -> list:
+    out = []
+    while not q.empty():
+        f = q.get_nowait()
+        if typ is None or f.get("type") == typ: out.append(f)
+    return out
+
+
+def _fake_exec_returning(lines_by_call):
+    """A create_subprocess_exec replacement; `lines_by_call` is a list consumed per spawn."""
+    calls = list(lines_by_call)
+    async def fake_exec(*argv, **kw):
+        return _FakeProc(calls.pop(0) if calls else ())
+    return fake_exec
+
+
+# ── pure helpers (unchanged) ──────────────────────────────────────────────────
 def test_compose_env():
     e = compose_env({"gcs": "qgc", "led": "stub", "autoabort": True, "web": True, "web_port": 8799,
                      "blackbox": "/tmp/f.jsonl"})
@@ -39,14 +93,68 @@ def test_launch_argv():
     assert launch_argv(root, "qgc") == ["bash", "/repo/runtime/t7_qgc.sh"]
 
 
-class _FakeProc:
-    _n = 0
-    def __init__(self): _FakeProc._n += 1; self.pid = 4000 + _FakeProc._n; self.returncode = None; self.signals = []
-    def send_signal(self, s): self.signals.append(s); self.returncode = -int(s)
-    async def wait(self): return self.returncode if self.returncode is not None else 0
-    def kill(self): self.returncode = -9
+# ── output capture + state machine ─────────────────────────────────────────────
+def test_reader_streams_log_frames(monkeypatch):
+    hub = _Hub(); q = hub.sink()
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", _fake_exec_returning([["hello", "world"]]))
+
+    async def body():
+        s = Supervisor(root="/repo", app=hub)
+        await s.spawn("player", n=1, show="x.json")
+        await asyncio.sleep(0.05)                         # let the reader drain the pipe
+        assert [f["line"] for f in _drain(q, "log")] == ["hello", "world"]
+        assert [f["line"] for f in s.rings["player"]] == ["hello", "world"]
+        await s.teardown()
+    asyncio.run(body())
 
 
+def test_sitl_readiness_transitions(monkeypatch):
+    hub = _Hub(); q = hub.sink()
+    lines = ["Startup script returned successfully"] * 4
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", _fake_exec_returning([lines]))
+
+    async def body():
+        s = Supervisor(root="/repo", app=hub)
+        await s.spawn("sitl", n=4)
+        await asyncio.sleep(0.05)
+        assert [(f["n"], f["of"]) for f in _drain(q, "ready")] == [(1, 4), (2, 4), (3, 4), (4, 4)]
+        assert s.status()["sitl"]["state"] == "running"
+        assert s._ready_events["sitl"].is_set()
+        await s.teardown()
+    asyncio.run(body())
+
+
+def test_sitl_failure_state(monkeypatch):
+    hub = _Hub()
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec",
+                        _fake_exec_returning([["Startup script returned with return value: 1"]]))
+
+    async def body():
+        s = Supervisor(root="/repo", app=hub)
+        await s.spawn("sitl", n=4)
+        await asyncio.sleep(0.05)
+        assert s.status()["sitl"]["state"] == "failed"
+        assert not s._ready_events["sitl"].is_set()
+        await s.teardown()
+    asyncio.run(body())
+
+
+def test_commander_readiness_marker(monkeypatch):
+    hub = _Hub()
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec",
+                        _fake_exec_returning([["[web] SkyForge operator UI bridge on http://127.0.0.1:8799"]]))
+
+    async def body():
+        s = Supervisor(root="/repo", app=hub)
+        await s.spawn("commander", n=4, opts={"web": True})
+        await asyncio.sleep(0.05)
+        assert s.status()["commander"]["state"] == "ready"
+        assert s._ready_events["commander"].is_set()
+        await s.teardown()
+    asyncio.run(body())
+
+
+# ── spawn / teardown ───────────────────────────────────────────────────────────
 def test_spawn_and_ordered_teardown(monkeypatch):
     spawned = []
     async def fake_exec(*argv, **kw):
@@ -67,9 +175,8 @@ def test_spawn_and_ordered_teardown(monkeypatch):
 
 
 def test_respawn_stops_old_proc(monkeypatch):
-    procs = []
     async def fake_exec(*argv, **kw):
-        p = _FakeProc(); procs.append(p); return p
+        return _FakeProc()
     monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", fake_exec)
 
     async def body():
@@ -79,4 +186,21 @@ def test_respawn_stops_old_proc(monkeypatch):
         await s.spawn("sitl", n=8)                 # respawn same target
         assert first.returncode is not None        # old proc was stopped, not orphaned
         assert s.procs["sitl"] is not first        # tracking the new one
+        await s.teardown()
+    asyncio.run(body())
+
+
+def test_teardown_cancels_readers(monkeypatch):
+    async def fake_exec(*argv, **kw):
+        return _FakeProc()                          # never EOFs on its own → reader stays alive
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", fake_exec)
+
+    async def body():
+        s = Supervisor(root="/repo")
+        await s.spawn("commander", n=4, opts={"web": True})
+        reader = s.readers["commander"]
+        assert not reader.done()
+        await s.teardown()
+        assert reader.done()                        # reader cancelled/joined on teardown
+        assert s.procs == {}
     asyncio.run(body())

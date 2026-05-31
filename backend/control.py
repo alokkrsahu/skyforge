@@ -19,20 +19,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from .pubsub import broadcast        # re-exported here for serve_web + existing importers
+
 # Guard substrings (amber): the verb declined due to a precondition, not an error.
 _GUARDS = ("not airborne", "in offboard", "Already airborne", "Unknown colour")
-
-
-def broadcast(app: FastAPI, msg: dict) -> None:
-    """Fan a frame out to every connected /ws subscriber (per-client latest-wins queues),
-    so multiple windows all see cmd_result/health — a single shared queue would deliver
-    each frame to only ONE client."""
-    for q in list(getattr(app.state, "subscribers", ())):
-        try:
-            q.put_nowait(msg)
-        except Exception:
-            try: q.get_nowait(); q.put_nowait(msg)   # drop oldest
-            except Exception: pass
 
 
 def classify(msg: str, verb: str) -> dict:
