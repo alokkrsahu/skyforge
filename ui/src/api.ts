@@ -26,6 +26,9 @@ export async function launch(body: { n: number; arena: string; opts: LaunchOpts;
 export async function bringup(body: { target: string; n: number; arena: string; opts: LaunchOpts; mode?: string; show?: string }): Promise<any> {
   return post("/api/bringup", body);           // granular per-process spawn; mode: background|terminal
 }
+export async function stopTarget(target: string): Promise<any> {
+  return post("/api/stop", { target });        // kills just this process's group (px4/gz/commander tree)
+}
 export async function teardown(): Promise<any> { return post("/api/teardown"); }
 
 // Single-writer command authority: when held, the token is sent with every control call.

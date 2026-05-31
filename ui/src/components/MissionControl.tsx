@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { launch, bringup, teardown, type LaunchOpts } from "../api";
+import { launch, bringup, teardown, stopTarget, type LaunchOpts } from "../api";
 import { useStore, connectBridge, disconnectBridge } from "../store";
 
 const ARENAS = ["default", "walls", "windy", "frictionless", "forest", "baylands", "lawn", "aruco"];
@@ -74,6 +74,11 @@ export default function MissionControl() {
     if (target === "commander" && r.port) connectBridge(r.port);
   };
 
+  const stop = async (target: string) => {
+    await stopTarget(target);                  // reaps just this process's tree
+    if (target === "commander") disconnectBridge();
+  };
+
   return (
     <div className="panel mission">
       <h2>Mission Control</h2>
@@ -143,11 +148,14 @@ export default function MissionControl() {
                 </div>
                 <div className="proc-desc">{t.desc}</div>
                 <div className="proc-meta">{p?.pid ? `pid ${p.pid}` : "—"}{p?.code != null ? ` · exit ${p.code}` : ""}</div>
-                <button className="btn-ghost sm" disabled={disabled}
-                        title={t.needsShow && !compiledShow ? "compile a show first (Author)" : ""}
-                        onClick={() => startTarget(t.key, t.needsShow)}>
-                  {p?.running ? "Restart" : "Start"}{t.display ? " (display)" : ""}
-                </button>
+                <div className="proc-actions">
+                  <button className="btn-ghost sm" disabled={disabled}
+                          title={t.needsShow && !compiledShow ? "compile a show first (Author)" : ""}
+                          onClick={() => startTarget(t.key, t.needsShow)}>
+                    {p?.running ? "Restart" : "Start"}{t.display ? " (display)" : ""}
+                  </button>
+                  <button className="btn-danger sm" disabled={!p?.running} onClick={() => stop(t.key)}>Stop</button>
+                </div>
               </div>
             );
           })}

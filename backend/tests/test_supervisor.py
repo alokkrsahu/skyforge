@@ -7,6 +7,7 @@ verified manually.
 """
 import asyncio
 import os
+import signal
 import sys
 
 import pytest
@@ -19,9 +20,13 @@ from backend.supervisor import compose_env, parse_sitl_ready, launch_argv, Super
 
 @pytest.fixture(autouse=True)
 def _no_real_fs(monkeypatch):
-    """teardown() globs + removes /tmp/px4-sock-*,px4_lock-* — never touch a dev machine's real
-    sockets from a unit test."""
+    """Stop unit tests from touching the real machine: teardown() globs+removes /tmp sockets and
+    os.killpg's spawned groups. Stub glob→[] and record killpg calls (a fake pid could otherwise
+    map to a real process group). Returns the killpg call list so tests can assert on it."""
     monkeypatch.setattr(sup.glob, "glob", lambda *a, **k: [])
+    killpg_calls: list = []
+    monkeypatch.setattr(sup.os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)))
+    return killpg_calls
 
 
 # ── A fake subprocess: yields canned stdout lines, then keeps the pipe open (blocking on
@@ -183,7 +188,22 @@ def test_spawn_and_ordered_teardown(monkeypatch):
     assert any("t6_commander.sh" in a for argv in spawned for a in argv)
 
 
-def test_respawn_stops_old_proc(monkeypatch):
+def test_spawn_uses_new_session(monkeypatch):
+    seen = {}
+    async def fake_exec(*argv, **kw):
+        seen.update(kw); return _FakeProc()
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", fake_exec)
+
+    async def body():
+        s = Supervisor(root="/repo")
+        await s.spawn("sitl", n=4)
+        assert seen.get("start_new_session") is True      # own process group → killable as a tree
+        assert s.pgids["sitl"] == s.procs["sitl"].pid
+        await s.teardown()
+    asyncio.run(body())
+
+
+def test_respawn_kills_old_group(monkeypatch, _no_real_fs):
     async def fake_exec(*argv, **kw):
         return _FakeProc()
     monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", fake_exec)
@@ -191,11 +211,54 @@ def test_respawn_stops_old_proc(monkeypatch):
     async def body():
         s = Supervisor(root="/repo")
         await s.spawn("sitl", n=4)
-        first = s.procs["sitl"]
+        first_pgid = s.pgids["sitl"]; first = s.procs["sitl"]
         await s.spawn("sitl", n=8)                 # respawn same target
-        assert first.returncode is not None        # old proc was stopped, not orphaned
+        assert (first_pgid, signal.SIGTERM) in _no_real_fs   # old GROUP was killed, not orphaned
         assert s.procs["sitl"] is not first        # tracking the new one
         await s.teardown()
+    asyncio.run(body())
+
+
+def test_stop_target_killpg(monkeypatch, _no_real_fs):
+    async def fake_exec(*argv, **kw):
+        return _FakeProc()
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", fake_exec)
+
+    async def body():
+        s = Supervisor(root="/repo")
+        await s.spawn("sitl", n=4)
+        pgid = s.pgids["sitl"]
+        assert await s.stop_target("sitl") is True
+        assert (pgid, signal.SIGTERM) in _no_real_fs and (pgid, signal.SIGKILL) in _no_real_fs
+        assert s.status()["sitl"]["state"] == "exited" and "sitl" not in s.pgids
+        assert await s.stop_target("nope") is False
+        await s.teardown()
+    asyncio.run(body())
+
+
+def test_teardown_clean_sweep(monkeypatch, _no_real_fs):
+    swept = []
+    async def fake_exec(*argv, **kw):
+        swept.append(argv); return _FakeProc()
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", fake_exec)
+
+    async def body():
+        s = Supervisor(root="/repo")
+        await s.spawn("sitl", n=4)
+        await s.spawn("commander", n=4, opts={"web": True})
+        await s.spawn("gui", n=4)
+        await s.spawn("qgc", n=4)
+        sitl_pgid = s.pgids["sitl"]
+        killed = await s.teardown()
+        flat = [tuple(a) for a in swept]
+        joined = [" ".join(a) for a in flat]
+        # every group SIGTERM'd, and the clean-slate sweep pattern-kills the escapees + quits QGC
+        assert (sitl_pgid, signal.SIGTERM) in _no_real_fs
+        for pat in ("bin/px4", "gz sim", "mavsdk_server", "run_commander"):
+            assert any(pat in j for j in joined), pat
+        assert any("QGroundControl" in j for j in joined)        # QGC quit (escapes the group)
+        assert s.procs == {} and s.pgids == {} and s.terms == {}
+        assert set(killed) >= {"sitl", "commander", "gui", "qgc"}
     asyncio.run(body())
 
 

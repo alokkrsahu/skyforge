@@ -105,6 +105,21 @@ class LaunchReq(BaseModel):
     n: int = 4; arena: str = "default"; opts: dict = {}; mode: str = "background"
 
 
+class StopReq(BaseModel):
+    target: str
+
+
+# Clean-slate teardown sweep — the proven kill list from t1_sitl.sh:82-88, extended with the
+# Gazebo GUI and the launch wrappers. Matches process command lines via `pkill -9 -f`. NONE of
+# these match "uvicorn"/"backend.app", so the gateway can never kill itself. (QGroundControl is
+# handled separately — it's launched detached via `open` and escapes the process group.)
+_SWEEP_PATTERNS = ["bin/px4", "gz sim", "mavsdk_server", "run_commander", "run_skyforge",
+                   "onboard_agent", "t1_sitl.sh", "t2_gazebo_gui.sh", "t6_commander.sh",
+                   "t8_agents.sh", "t5_skyforge.sh"]
+_SWEEP_FILES = ["/tmp/px4-sock-*", "/tmp/px4_lock-*", "/tmp/px4_sitl_*.log",
+                "/tmp/gz_gui.log", "/tmp/skyforge_*.log"]
+
+
 class Supervisor:
     def __init__(self, root: str | None = None, app=None):
         self.root = root or os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -116,6 +131,7 @@ class Supervisor:
         self.state: dict[str, dict] = {}                             # per-target state machine
         self._ready_events: dict[str, asyncio.Event] = {}            # set when a target hits "ready"
         self._spawn_n: dict[str, int] = {}                           # expected N (SITL readiness)
+        self.pgids: dict[str, int] = {}                              # per-target process-group id (kill the whole tree)
         self._orchestrating = False                                  # one-click launch in flight?
         self._launch_task: asyncio.Task | None = None
         self._last_lifecycle: dict | None = None                     # replayed to new /ws clients
@@ -179,10 +195,46 @@ class Supervisor:
             try: p.kill()
             except Exception: pass
 
+    async def _killpg(self, pgid: int, sig: int) -> None:
+        try:
+            os.killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+    async def _stop_group(self, target: str, grace: float = 4.0) -> None:
+        """Reap a target's WHOLE process group (wrapper + px4 ×N + gz server/GUI + commander +
+        mavsdk): SIGTERM the group → await the leader → SIGKILL the group (any survivors). Works
+        even if the wrapper already orphaned — the group lives while any member does."""
+        pgid = self.pgids.get(target)
+        proc = self.procs.get(target)
+        if pgid is None:                                  # no group recorded → single-PID fallback
+            return await self._stop(proc)
+        await self._killpg(pgid, signal.SIGTERM)
+        try:
+            if proc is not None:
+                await asyncio.wait_for(proc.wait(), timeout=grace)
+            else:
+                await asyncio.sleep(min(grace, 1.0))
+        except (asyncio.TimeoutError, Exception):
+            pass
+        await self._killpg(pgid, signal.SIGKILL)          # reap children that outlived the leader
+
+    async def _quit_qgc(self) -> None:
+        """QGroundControl is launched detached via `open` (LaunchServices) so it escapes the
+        process group — quit it explicitly (graceful, then force)."""
+        for argv in (["osascript", "-e", 'quit app "QGroundControl"'],
+                     ["pkill", "-9", "-f", "QGroundControl"]):
+            try:
+                p = await asyncio.create_subprocess_exec(*argv,
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                await asyncio.wait_for(p.wait(), timeout=4.0)
+            except Exception:
+                pass
+
     async def _stop_one(self, target: str) -> None:
-        """Stop a running instance of `target` (background OR terminal) and cancel its reader —
-        don't orphan a respawn, and SIGTERM before cancelling so the child stops writing first."""
-        if target in self.terms:                          # terminal mode: no PID handle → pkill the script
+        """Stop a running instance of `target` and cancel its reader. Background = killpg the whole
+        group; terminal = pkill the script; qgc additionally quits the detached QGC app."""
+        if target in self.terms:                          # terminal mode: no group handle → pkill the script
             script = LAUNCHERS.get(target, (None,))[0]
             if script:
                 try:
@@ -192,12 +244,41 @@ class Supervisor:
                     pass
             self.terms.pop(target, None)
         else:
-            await self._stop(self.procs.get(target))      # SIGTERM first → child stops writing
+            await self._stop_group(target)                # reap the wrapper + all its children
+        if target == "qgc":
+            await self._quit_qgc()
+        self.pgids.pop(target, None)
         reader = self.readers.pop(target, None)            # then cancel the reader (no pipe deadlock)
         if reader is not None and not reader.done():
             reader.cancel()
             try: await reader
             except BaseException: pass
+
+    async def stop_target(self, target: str) -> bool:
+        """Per-process Stop (the UI's per-card button). Reaps just this target's tree."""
+        if target not in self.state and target not in self.pgids and target not in self.terms:
+            return False
+        await self._stop_one(target)
+        self.procs.pop(target, None)
+        self._set_state(target, "exited")                 # broadcasts the updated proc frame
+        return True
+
+    async def _clean_sweep(self) -> None:
+        """Clean-slate sweep: pattern-kill any stack process that escaped its group (orphans from a
+        crash/prior run), quit QGroundControl, and remove stale sockets/locks/logs so the next
+        bring-up isn't blocked by a stale mavsdk_server/px4-sock (the known arm-denial gotcha)."""
+        for pat in _SWEEP_PATTERNS:
+            try:
+                p = await asyncio.create_subprocess_exec("pkill", "-9", "-f", pat,
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                await p.wait()
+            except Exception:
+                pass
+        await self._quit_qgc()
+        for pat in _SWEEP_FILES:
+            for f in glob.glob(pat):
+                try: os.remove(f)
+                except OSError: pass
 
     async def _read_loop(self, target: str, proc) -> None:
         """Stream one process's merged stdout/stderr: ring-buffer + broadcast each line, run the
@@ -236,8 +317,10 @@ class Supervisor:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,             # one ordered, interleaved stream
             stdin=asyncio.subprocess.DEVNULL,             # headless t6 must never block on a TTY
-        )
+            start_new_session=True,                       # own process group → killpg reaps the whole
+        )                                                 #   tree (px4 ×N, gz server/GUI) even if it orphans
         self.procs[target]   = proc
+        self.pgids[target]   = proc.pid                   # group leader's pid == pgid
         self._set_state(target, "starting", pid=proc.pid, code=None,
                         ready_n=0, ready_of=(n if target == "sitl" else 1))
         self.readers[target] = asyncio.create_task(self._read_loop(target, proc))
@@ -368,9 +451,10 @@ class Supervisor:
             self._orchestrating = False
 
     async def teardown(self) -> list[str]:
-        """Abort any in-flight launch, SIGTERM/pkill tracked procs in safe order, cancel their
-        readers, then clean up orphan mavsdk_server + stale sockets/locks (a stale server/sock
-        otherwise denies arm on the next bring-up — known clean-restart gotcha)."""
+        """Abort any in-flight launch, kill every spawned process GROUP in safe order (reaping
+        px4/gz/commander/mavsdk with their wrappers), cancel readers, then run the clean-slate
+        sweep (pattern-kill escapees + QGroundControl + stale sockets/logs). Leaves a spotless
+        machine — `ps` shows zero stack processes afterwards."""
         if self._launch_task is not None and not self._launch_task.done():
             self._launch_task.cancel()
             try: await self._launch_task
@@ -380,28 +464,20 @@ class Supervisor:
 
         killed = []
         for name in _TEARDOWN_ORDER:
-            p = self.procs.get(name)
-            if (p is not None and p.returncode is None) or name in self.terms:
-                await self._stop_one(name)                # SIGTERM/pkill + cancel reader
+            if name in self.pgids or name in self.terms:  # anything we spawned (even if it orphaned)
+                await self._stop_one(name)                # killpg the group / pkill the script + reader
                 killed.append(name)
         for target, reader in list(self.readers.items()):    # defensive: any reader not yet cancelled
             if not reader.done():
                 reader.cancel()
         await asyncio.gather(*self.readers.values(), return_exceptions=True)
         self.readers.clear()
-        try:                                              # and actually wait for pkill to finish
-            pk = await asyncio.create_subprocess_exec("pkill", "-9", "-f", "mavsdk_server")
-            await pk.wait()
-        except Exception:
-            pass
-        for pat in ("/tmp/px4-sock-*", "/tmp/px4_lock-*"):   # documented clean-restart cleanup
-            for f in glob.glob(pat):
-                try: os.remove(f)
-                except OSError: pass
+        await self._clean_sweep()                         # clean slate: escapees + QGC + sockets/logs
         for name in killed:
             self._set_state(name, "exited")
         self.procs.clear()
         self.terms.clear()
+        self.pgids.clear()
         self._broadcast({"type": "proc", "procs": self.status()})
         return killed
 
@@ -433,6 +509,10 @@ def register_supervisor(app) -> None:
     @app.get("/api/procs")
     async def procs():
         return sup.status()
+
+    @app.post("/api/stop")
+    async def stop(b: StopReq):
+        return {"ok": await sup.stop_target(b.target), "target": b.target}
 
     @app.post("/api/teardown")
     async def teardown():
