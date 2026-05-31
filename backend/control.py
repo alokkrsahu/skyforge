@@ -48,7 +48,7 @@ class TakeoffReq(BaseModel):   altitude_m: float = 5.0
 class FormationReq(BaseModel): spec: str; transition_s: float = 6.0
 class MoveReq(BaseModel):      dN: float = 0.0; dE: float = 0.0; transition_s: float = 5.0
 class AltReq(BaseModel):       alt_m: float; transition_s: float = 5.0
-class ColorReq(BaseModel):     name: str | None = None; r: float = 0.0; g: float = 0.8; b: float = 0.0
+class ColorReq(BaseModel):     name: str | None = None; r: float | None = None; g: float | None = None; b: float | None = None
 class LandReq(BaseModel):      stagger: bool = True
 class RtlReq(BaseModel):       transition_s: float = 8.0
 
@@ -77,7 +77,13 @@ def register_control(app: FastAPI) -> None:
 
     @app.post("/api/cmd/color")
     async def color(b: ColorReq):
-        msg = await (cmd().set_color(b.name) if b.name is not None else cmd().set_color(b.r, b.g, b.b))
+        if b.name:                                       # a non-empty named colour
+            msg = await cmd().set_color(b.name)
+        elif None not in (b.r, b.g, b.b):                # all three RGB explicitly given
+            msg = await cmd().set_color(b.r, b.g, b.b)
+        else:                                            # neither → don't silently set green
+            return {"ok": False, "guard": True, "verb": "color",
+                    "status": "Usage: color <name> or color <r> <g> <b>"}
         return reply(msg, "color")
 
     @app.post("/api/cmd/hover")

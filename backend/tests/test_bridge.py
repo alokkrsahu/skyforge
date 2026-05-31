@@ -66,6 +66,17 @@ def test_unguarded_verbs_run_when_grounded():
     assert c.post("/api/cmd/hover", json={}).json()["ok"] is True
 
 
+def test_color_requires_explicit_input():
+    c, _ = _client(airborne=True)
+    # omitting both name and rgb must NOT silently set green — it's a usage guard
+    r = c.post("/api/cmd/color", json={}).json()
+    assert r["ok"] is False and r["guard"] is True and "Usage" in r["status"]
+    # empty-string name is not a colour lookup either
+    assert c.post("/api/cmd/color", json={"name": ""}).json()["guard"] is True
+    # explicit RGB works
+    assert c.post("/api/cmd/color", json={"r": 1.0, "g": 0.0, "b": 0.0}).json()["ok"] is True
+
+
 def test_abort_always_callable_estop():
     c, _ = _client(airborne=True)
     r = c.post("/api/cmd/abort").json()
