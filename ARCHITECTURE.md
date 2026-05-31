@@ -85,8 +85,12 @@ Two modes (see `runtime/CLAUDE.md` for ops):
   track interpolated formation targets; multi-flight cycle. A `formation` change reuses the
   compiler's collision-free planning *live*: scale the formation to the fleet + `assign_nocross`
   (targeting ~2.5 m clearance for tracking-error margin) so dense pattern changes don't fly drones
-  through each other; APF is the reactive backstop. It stays single-altitude (no offline-style
-  altitude layering — a fast live transition can't make the vertical reconverge PX4-feasible).
+  through each other; APF is the reactive backstop. It does **not** add offline-style climb→
+  cross→descend layering (a fast live transition can't make that vertical reconverge
+  PX4-feasible) — each drone flies *straight* to its slot. Formations may be **volumetric 3D**
+  (an offset's optional `dU` gives a per-drone target altitude, e.g. the cat sculpture): the
+  drones just go to their 3D slots, APF separates in 3D, and `dU` separation only helps; flat
+  formations (`dU=0`) keep every drone on one plane.
   `takeoff` rises drones **in place** (keeps current XY) rather than converging the fleet to home.
 
 MAVSDK/PX4 wiring: one `mavsdk_server` per drone (gRPC `GRPC_BASE+i`, MAVLink UDP `MAVLINK_BASE+i`)

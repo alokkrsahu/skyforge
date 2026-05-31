@@ -58,9 +58,12 @@ pkill -f "run_commander"; pkill -9 -f "mavsdk_server"; sleep 2
   (`get_formation(spec, n, min_spacing_m=3.0)`) and `assign_nocross`es drones from their
   current positions to slots so a live pattern change (e.g. `circle` → `star`) doesn't fly
   drones through each other. The assignment targets ~2.5 m clearance (margin above the
-  1.5 m floor for PX4 tracking error); APF is the reactive backstop. Single-altitude,
-  horizontal-only — altitude layering stays offline-only (`t5` player), where transitions
-  are long enough for the vertical reconverge to be PX4-feasible.
+  1.5 m floor for PX4 tracking error); APF is the reactive backstop. The crossing check is
+  horizontal; each drone then flies STRAIGHT to its slot (no climb→cross→descend layering —
+  that stays offline-only, where transitions are long enough for the vertical reconverge to be
+  PX4-feasible). Formations can be **volumetric 3D**: a `(dN,dE,dU)` offset gives a per-drone
+  target altitude (`-alt_m - dU`, dU≥0), e.g. the cat sculpture; APF separates in 3D. A flat
+  formation (dU=0) keeps the fleet on one plane.
 
 **Skyforge show** (`run_skyforge.py` + `show/skyforge_adapter.py`):
 - Loads `.skyforge.json` (piecewise polynomial trajectories) via `../core/show_format`

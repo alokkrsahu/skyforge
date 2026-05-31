@@ -142,20 +142,33 @@ class ShowBuilder:
         return [0] * self._n
 
     def _append_transition(
-        self, wps, current_ne, targets, slot_assignment, bands, t_start, transition_s,
-    ) -> list[tuple[float, float]]:
+        self, wps, current_ne, current_u, targets, slot_assignment, bands, t_start, transition_s,
+    ) -> tuple[list[tuple[float, float]], list[float]]:
         """
         Append ONE transition to each drone's waypoint list: climb→cross→descend
-        through its vertical band (band 0 = straight, no climb), arriving at show
-        altitude at t_start+transition_s. Returns the new current_ne (assigned
-        slot positions). Shared by formation acts AND the landing reconverge.
+        through its vertical band (band 0 = straight, no climb), arriving at its
+        per-drone show altitude (`-SHOW_ALT_M - dU`) at t_start+transition_s.
+        Returns the new (current_ne, current_u). Shared by formation acts AND landing.
+
+        `targets` are (tN, tE, tU) — tU (up, >=0) is the slot's volumetric altitude.
+        For a FLAT move (all tU and current_u are 0) this is byte-for-byte the old
+        behaviour. For a VOLUMETRIC move the cross phase is lifted to a transit ceiling
+        ABOVE the whole envelope (source + target), so climb→cross→descend stays clear
+        of every drone's hold altitude — collision-free by construction (3D-validated).
         """
         t_arrive = t_start + transition_s
         cf       = CLIMB_FRAC
+        tgt_u    = [targets[slot_assignment[i]][2] for i in range(self._n)]
+        ceiling_u = max([0.0] + list(current_u) + tgt_u)            # highest hold, src or tgt
+        # Transit bands sit above the envelope for volumetric moves; for a flat move
+        # (ceiling 0) this reduces to the original -SHOW_ALT_M base, unchanged.
+        transit_base = -SHOW_ALT_M - (ceiling_u + self._layer_spacing_m if ceiling_u > 1e-9 else 0.0)
         new_ne: list[tuple[float, float]] = []
+        new_u:  list[float] = []
         for i in range(self._n):
-            tN, tE   = targets[slot_assignment[i]]
-            cN0, cE0 = current_ne[i]
+            tN, tE, tU = targets[slot_assignment[i]]
+            cN0, cE0   = current_ne[i]
+            arrive_d   = -SHOW_ALT_M - tU
             if bands[i] > 0 and transition_s > 0:
                 # Phase-separated move so banded drones can NEVER collide:
                 #   climb  — straight UP at the start slot (slots are >= min_sep apart),
@@ -164,12 +177,13 @@ class ShowBuilder:
                 #   descend — straight DOWN at the target slot.
                 # No diagonal motion means no drone is ever both horizontally close to a
                 # neighbour AND at the same altitude during a transition.
-                band_d = -SHOW_ALT_M - bands[i] * self._layer_spacing_m
+                band_d = transit_base - bands[i] * self._layer_spacing_m
                 wps[i].append((t_start + cf * transition_s,       Vec3(cN0, cE0, band_d)))   # climb
                 wps[i].append((t_arrive - cf * transition_s,      Vec3(tN,  tE,  band_d)))   # cross
-            wps[i].append((t_arrive, Vec3(tN, tE, -SHOW_ALT_M)))                              # descend / arrive
+            wps[i].append((t_arrive, Vec3(tN, tE, arrive_d)))                                 # descend / arrive
             new_ne.append((tN, tE))
-        return new_ne
+            new_u.append(tU)
+        return new_ne, new_u
 
     def transition_windows(self) -> list[tuple[float, float]]:
         """
@@ -217,8 +231,9 @@ class ShowBuilder:
 
         # Accumulate current positions and clock
         t_now = TAKEOFF_T
-        # After takeoff, drones hover at home XY positions
+        # After takeoff, drones hover at home XY positions, all at show altitude
         current_ne = [(spec.home_ned.n, spec.home_ned.e) for spec in self._drones]
+        current_u  = [0.0] * self._n   # per-drone UP offset above show altitude (volumetric)
 
         def _bands(curr, tgts, slots, trans_s, t_idx):
             # band_plan override (verified layering) takes precedence; else default.
@@ -234,23 +249,26 @@ class ShowBuilder:
                 act.formation, self._n, min_spacing_m=self._min_sep_m + 1.0
             )
             cN, cE  = act.center_ne
-            targets = [(cN + dN, cE + dE) for (dN, dE) in offsets]
+            # offsets are (dN, dE, dU); dU (up, >=0) makes the formation volumetric.
+            targets    = [(cN + dN, cE + dE, dU) for (dN, dE, dU) in offsets]
+            targets_ne = [(t[0], t[1]) for t in targets]   # XY only for assignment/banding
 
             # Assign slots, altitude-layer the transition, and emit climb/cross/
-            # descend waypoints (a conflict-free transition stays flat).
-            slot_assignment = assign(current_ne, targets, self._min_sep_m)
-            bands = _bands(current_ne, targets, slot_assignment, act.transition_s, act_idx)
+            # descend waypoints (a conflict-free FLAT transition stays flat; a
+            # volumetric one routes the cross above the sculpture envelope).
+            slot_assignment = assign(current_ne, targets_ne, self._min_sep_m)
+            bands = _bands(current_ne, targets_ne, slot_assignment, act.transition_s, act_idx)
             t_arrive   = t_now + act.transition_s
-            current_ne = self._append_transition(
-                drone_waypoints, current_ne, targets, slot_assignment, bands,
+            current_ne, current_u = self._append_transition(
+                drone_waypoints, current_ne, current_u, targets, slot_assignment, bands,
                 t_now, act.transition_s,
             )
 
-            # Hold: stationary waypoint at hold end (same position)
+            # Hold: stationary waypoint at hold end (same position + per-drone altitude)
             t_hold_end = t_arrive + act.hold_s
             for i in range(self._n):
                 tN, tE = current_ne[i]
-                drone_waypoints[i].append((t_hold_end, Vec3(tN, tE, -SHOW_ALT_M)))
+                drone_waypoints[i].append((t_hold_end, Vec3(tN, tE, -SHOW_ALT_M - current_u[i])))
             t_now = t_hold_end
 
         # Landing reconverge — route through the SAME assignment + layering as a
@@ -258,11 +276,12 @@ class ShowBuilder:
         # to minimise crossings; drones then descend straight down to their pad.
         land_idx        = len(self._acts)
         home_targets    = [(s.home_ned.n, s.home_ned.e) for s in self._drones]
+        home_targets3   = [(n, e, 0.0) for (n, e) in home_targets]   # reconverge to show alt, then land
         land_assignment = assign(current_ne, home_targets, self._min_sep_m)
         land_bands      = _bands(current_ne, home_targets, land_assignment, LAND_TRANS_S, land_idx)
         LAND_T          = t_now + LAND_TRANS_S
-        current_ne      = self._append_transition(
-            drone_waypoints, current_ne, home_targets, land_assignment, land_bands,
+        current_ne, current_u = self._append_transition(
+            drone_waypoints, current_ne, current_u, home_targets3, land_assignment, land_bands,
             t_now, LAND_TRANS_S,
         )
         for i in range(self._n):

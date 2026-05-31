@@ -82,7 +82,8 @@ def test_letter_transition_scaled_assigned_is_safe():
         A = np.array(get_formation(sA, N, min_spacing_m=sp))
         B = np.array(get_formation(sB, N, min_spacing_m=sp))
         if assign:
-            asn = assign_nocross([tuple(p) for p in A], [tuple(p) for p in B], MIN)
+            # assign_nocross is 2D (horizontal) — strip the dU column from the 3-tuples
+            asn = assign_nocross([(p[0], p[1]) for p in A], [(p[0], p[1]) for p in B], MIN)
             B = np.array([B[asn[i]] for i in range(N)])
         worst = np.inf
         for s in np.linspace(0, 1, 80):

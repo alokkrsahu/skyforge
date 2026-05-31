@@ -53,8 +53,10 @@ builder.add_led_cue(t=0, color=Color(0, 0.8, 0))
 ```
 
 Formations: `circle`, `grid`, `line`, `v_shape`, `star`, `spiral`, `text:HELLO`, or an explicit
-list of `(dN, dE)` offsets. Formations auto-scale so the fleet clears the planned separation.
-They're a **plugin package** (`compiler/formations/`): one file per pattern under `patterns/`
+list of `(dN, dE[, dU])` offsets. Formations auto-scale so the fleet clears the planned
+separation. Data patterns may carry a third column `dU` (up) for **volumetric 3D sculptures**
+(e.g. `cat`) — legible from the ground, not just overhead; flat patterns omit it. They're a
+**plugin package** (`compiler/formations/`): one file per pattern under `patterns/`
 (code `.py` or data `.csv`/`.json`) — drop a file and it's instantly usable, no other edits. See
 [`compiler/formations/patterns/README.md`](compiler/formations/patterns/README.md).
 

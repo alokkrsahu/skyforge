@@ -125,7 +125,8 @@ def test_get_formation_text_scale():
 def test_get_formation_custom_list():
     custom = [(1.0, 2.0), (3.0, 4.0), (5.0, 6.0)]
     pts = get_formation(custom, 3)
-    assert pts == custom
+    # get_formation now returns 3-tuples (dU=0 for a flat 2-tuple input)
+    assert pts == [(n, e, 0.0) for (n, e) in custom]
 
 
 def test_get_formation_legacy_diamond():

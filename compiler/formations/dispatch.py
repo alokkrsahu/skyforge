@@ -14,18 +14,22 @@ import json
 
 from .base import (
     _ALIASES, _REGISTRY, PATTERNS_DIR, _PATTERNS_PKG,
-    _centre, _fit_min_spacing, _pad_to, list_formations,
+    _centre, _fit_min_spacing, _pad_to, _xyz, list_formations,
 )
 
 
 def get_formation(
-    spec: "str | list[tuple[float, float]]",
+    spec: "str | list[tuple[float, ...]]",
     n:    int,
     min_spacing_m: float = 0.0,
     spacing_percentile: float = 0.0,
-) -> list[tuple[float, float]]:
+) -> list[tuple[float, float, float]]:
     """
-    Return exactly n (dN, dE) offsets for the given formation spec.
+    Return exactly n (dN, dE, dU) offsets for the given formation spec.
+
+    Offsets are always 3-tuples in metres. dU (up) is the optional VOLUMETRIC axis:
+    code generators and text return flat shapes (dU=0); data patterns (.csv/.json) may
+    carry a 3rd column/element for a true 3D sculpture (see patterns/README.md).
 
     spec can be:
       "circle"              built-in generator
@@ -68,21 +72,24 @@ def _load_code_pattern(name: str):
     return None
 
 
-def _read_csv(path) -> list[tuple[float, float]]:
+def _read_csv(path) -> list[tuple[float, float, float]]:
+    # Rows are `dN,dE` (flat) or `dN,dE,dU` (volumetric); a missing 3rd column is 0.0.
     pts = []
     with open(path) as f:
         for row in csv.reader(f):
             if not row or row[0].lstrip().startswith("#"):
                 continue
-            pts.append((float(row[0]), float(row[1])))
+            dU = float(row[2]) if len(row) > 2 and row[2].strip() != "" else 0.0
+            pts.append((float(row[0]), float(row[1]), dU))
     return pts
 
 
-def _read_json(path) -> list[tuple[float, float]]:
+def _read_json(path) -> list[tuple[float, float, float]]:
+    # Points are [dN,dE] (flat) or [dN,dE,dU] (volumetric); a missing 3rd value is 0.0.
     with open(path) as f:
         data = json.load(f)
     pts = data["points"] if isinstance(data, dict) else data
-    return [(float(p[0]), float(p[1])) for p in pts]
+    return [(float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 else 0.0) for p in pts]
 
 
 def _load_data_pattern(name: str):
@@ -111,7 +118,7 @@ def _get_formation_raw(
         for part in parts[1:]:
             if part.startswith("scale="):
                 scale_m = float(part[6:])
-        return _load_code_pattern("text")(string, n=n, scale_m=scale_m)
+        return [_xyz(p) for p in _load_code_pattern("text")(string, n=n, scale_m=scale_m)]
 
     # "grid:spacing=4" or "circle:radius_m=8" — keyword params after the name
     base, *kv_parts = name.split(":")
@@ -126,7 +133,7 @@ def _get_formation_raw(
                 kwargs[k.strip()] = float(v.strip())
         valid    = set(inspect.signature(fn).parameters) - {"n"}
         filtered = {k: v for k, v in kwargs.items() if k in valid}
-        return fn(n, **filtered)
+        return [_xyz(p) for p in fn(n, **filtered)]   # flat generators → dU=0
 
     pts = _load_data_pattern(base)
     if pts is not None:

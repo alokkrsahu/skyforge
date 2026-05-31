@@ -130,21 +130,27 @@ class FleetCommander:
         # Assign drones to slots minimising path crossings (Hungarian + separation
         # repair) from their CURRENT positions, rather than the naive drone-i→slot-i
         # mapping — the latter sends drones straight through each other on a dense
-        # pattern change (e.g. text:A → text:B). Single altitude + horizontal-only
-        # move keeps it PX4-trackable; APF stays as the reactive safety net.
+        # pattern change (e.g. text:A → text:B). The crossing check is HORIZONTAL
+        # (XY); each drone then flies STRAIGHT to its 3D slot — no climb/cross/descend
+        # layering, so there's nothing to vertically reconverge (PX4-trackable). The
+        # formation's own dU (a volumetric sculpture) gives per-drone target altitudes;
+        # APF (3D) is the reactive backstop, and dU separation only helps.
         cx, cy  = rt.formation_center
-        targets = [(cx + dN, cy + dE) for dN, dE in offsets]
+        targets = [(cx + dN, cy + dE, dU) for dN, dE, dU in offsets]
         current = []
         for i in range(rt.n_drones):
             p = rt.current_positions.get(i) or rt.hold_pos.get(i, (cx, cy, -rt.alt_m))
             current.append((p[0], p[1]))
-        assignment = assign_nocross(current, targets, _PLAN_CROSS_M)
+        assignment = assign_nocross(current, [(t[0], t[1]) for t in targets], _PLAN_CROSS_M)
         end_pos = {
-            i: (targets[assignment[i]][0], targets[assignment[i]][1], -rt.alt_m)
+            # per-drone altitude = cruise altitude + the slot's up offset (dU >= 0)
+            i: (targets[assignment[i]][0], targets[assignment[i]][1],
+                -rt.alt_m - targets[assignment[i]][2])
             for i in range(rt.n_drones)
         }
         rt.start_transition(end_pos, transition_s)
-        return f"Transitioning to {spec!r} over {transition_s:.1f} s (scaled + crossing-free assignment)"
+        kind = "3D sculpture" if any(t[2] > 1e-6 for t in targets) else "scaled + crossing-free"
+        return f"Transitioning to {spec!r} over {transition_s:.1f} s ({kind} assignment)"
 
     async def move(
         self,
