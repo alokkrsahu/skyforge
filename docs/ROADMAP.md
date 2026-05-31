@@ -129,6 +129,10 @@ timeline/choreography editor, limited music-sync authoring (beat detection is ba
 The validator is **offline/static** and deconfliction can still **diverge on very dense fields**
 (mitigated by `verified_layering`, not guaranteed). No real-world tracking-error / wind margin in the
 model; APF is a reactive backstop, not a primary guarantee.
+> **Status:** ◑ **tracking-error margin** added — `ValidationConfig.tracking_margin_m` (CLI
+> `--tracking-margin`) requires planned separation to clear `min_sep + margin`, so the physical
+> min_sep holds when drones are up to `margin` off their setpoint (`tests/unit/test_validator.py`).
+> Default 0 → unchanged. Remaining: deconfliction-divergence guarantee on dense fields.
 
 ### 13. Regulatory & operational — 🟢
 No flight-log export for compliance, no airspace/NOTAM hooks, no rehearsal/dry-run mode distinct from

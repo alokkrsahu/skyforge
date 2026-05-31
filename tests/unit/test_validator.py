@@ -78,6 +78,21 @@ def test_bad_reactive_primitive_is_error():
     assert any("fly_like_a_butterfly" in e for e in result.errors)
 
 
+def test_tracking_margin_tightens_separation():
+    """Drones 2 m apart pass at min_sep 1.5; with a 0.7 m tracking margin (required 2.2 m)
+    the same show fails — the realism knob enforces physical min_sep under deviation."""
+    show = _build_show([(0, 0), (0, 2.0)])
+    assert validate(show, ValidationConfig(min_sep_m=1.5)).passed
+    res = validate(show, ValidationConfig(min_sep_m=1.5, tracking_margin_m=0.7))
+    assert not res.passed
+    assert any("tracking margin" in e for e in res.errors)
+
+
+def test_zero_margin_is_unchanged():
+    show = _build_show([(0, 0), (0, 2.0)])
+    assert validate(show, ValidationConfig(min_sep_m=1.5, tracking_margin_m=0.0)).passed
+
+
 def test_temporal_gap_is_error():
     """A gap between trajectory segments must produce an error."""
     show = _build_show([(0, 0), (0, 5)])

@@ -42,6 +42,11 @@ class ValidationConfig:
     min_sep_m:    float = 1.5    # hard minimum inter-drone separation (error if violated)
     warn_close_m: float = 2.5    # warn if drones come within this distance
     max_speed_ms: float = 15.0   # warn if any axis speed exceeds this
+    # Real-world realism: drones don't track the plan perfectly (wind, latency). Set this to
+    # your expected tracking error (e.g. ~0.3 m SITL, more outdoors) and validation requires
+    # the planned separation to clear min_sep_m + this, so the PHYSICAL min_sep still holds
+    # when each drone is up to `tracking_margin_m` off its setpoint. Default 0 → unchanged.
+    tracking_margin_m: float = 0.0
     # Sampling rate for separation / speed checks. Must be >= DeconflictConfig.sample_hz
     # (20 Hz) so validation can't pass a show that still has sub-sample-interval
     # conflicts the deconflicter was correcting. CompilePipeline enforces this.
@@ -135,10 +140,13 @@ def _check_separation(
             k = int(np.argmin(d))
             min_dist = float(d[k])
             min_t    = float(times[k])
-            if min_dist < config.min_sep_m:
+            required = config.min_sep_m + config.tracking_margin_m
+            if min_dist < required:
+                margin = (f" (min_sep {config.min_sep_m}m + tracking margin "
+                          f"{config.tracking_margin_m}m)") if config.tracking_margin_m else ""
                 errors.append(
                     f"drones {i}&{j} minimum separation {min_dist:.3f}m < "
-                    f"{config.min_sep_m}m at t={min_t:.1f}s"
+                    f"{required:.3f}m{margin} at t={min_t:.1f}s"
                 )
             elif min_dist < config.warn_close_m:
                 warnings.append(

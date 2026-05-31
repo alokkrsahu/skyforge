@@ -44,7 +44,8 @@ def cmd_compile(args: argparse.Namespace) -> int:
 
     cfg = CompileConfig(
         envelope   = EnvelopeConfig(min_sep_m=args.min_sep),
-        validation = ValidationConfig(min_sep_m=args.min_sep),
+        validation = ValidationConfig(min_sep_m=args.min_sep,
+                                      tracking_margin_m=getattr(args, "tracking_margin", 0.0)),
         compute_envelopes = True,
         validate          = not args.no_validate,
         fail_on_error     = False,   # CLI always prints result; caller decides
@@ -97,7 +98,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     show = from_json(path) if path.endswith(".json") else from_msgpack(path)
-    cfg  = ValidationConfig(min_sep_m=args.min_sep)
+    cfg  = ValidationConfig(min_sep_m=args.min_sep,
+                            tracking_margin_m=getattr(args, "tracking_margin", 0.0))
     result = validate(show, cfg)
     print(result)
     return 0 if result.passed else 1
@@ -196,6 +198,8 @@ def main() -> None:
                    help="Output directory (default: same as script)")
     p.add_argument("--min-sep",     type=float, default=1.5, metavar="M",
                    help="Minimum inter-drone separation in metres (default: 1.5)")
+    p.add_argument("--tracking-margin", type=float, default=0.0, metavar="M",
+                   help="Extra separation headroom for real tracking error (default: 0)")
     p.add_argument("--no-validate", action="store_true",
                    help="Skip validation after compilation")
 
@@ -203,6 +207,8 @@ def main() -> None:
     p = sub.add_parser("validate", help="Validate an existing .skyforge file")
     p.add_argument("show",      help="Path to .skyforge or .skyforge.json")
     p.add_argument("--min-sep", type=float, default=1.5, metavar="M")
+    p.add_argument("--tracking-margin", type=float, default=0.0, metavar="M",
+                   help="Extra separation headroom for real tracking error (default: 0)")
 
     # info
     p = sub.add_parser("info", help="Print show metadata")
