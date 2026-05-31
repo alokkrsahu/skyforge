@@ -61,6 +61,17 @@ def test_export_all_slices(tmp_path):
     assert r["exit"] == 0 and (tmp_path / "four_drone_demo.drone000.skyforge.json").exists()
 
 
+def test_flightlog_summary(tmp_path):
+    import json
+    log = tmp_path / "bb.jsonl"
+    log.write_text("\n".join(json.dumps(r) for r in [
+        {"t": 0.0, "n_lost": 0, "max_pos_error_m": 0.4, "min_battery_frac": 0.9},
+        {"t": 3.0, "n_lost": 1, "max_pos_error_m": 1.6, "min_battery_frac": 0.6},
+    ]) + "\n")
+    r = _client().post("/api/flightlog", json={"log": str(log)}).json()
+    assert r["exit"] == 0 and "Records" in r["stdout"]
+
+
 def test_info(tmp_path):
     c = _client()
     c.post("/api/compile", json={"script": DEMO, "output": str(tmp_path)})

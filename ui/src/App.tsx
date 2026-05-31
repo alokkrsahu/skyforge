@@ -7,6 +7,8 @@ import LifecycleRail from "./components/LifecycleRail";
 import AuthorPanel from "./components/AuthorPanel";
 import PreflightPanel from "./components/PreflightPanel";
 import BringupPanel from "./components/BringupPanel";
+import MonitorPanel from "./components/MonitorPanel";
+import ReviewPanel from "./components/ReviewPanel";
 import { useStore } from "./store";
 
 function FlyView() {
@@ -30,6 +32,8 @@ export default function App() {
           {view === "preflight" && <PreflightPanel />}
           {view === "bringup" && <BringupPanel />}
           {view === "fly" && <FlyView />}
+          {view === "monitor" && <MonitorPanel />}
+          {view === "review" && <ReviewPanel />}
         </main>
         <aside>
           <EmergencyRail />

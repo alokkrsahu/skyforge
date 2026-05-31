@@ -40,6 +40,7 @@ class EnergyReq(BaseModel):  show: str; endurance: float = 600.0; reserve: float
 class PreflightReq(BaseModel): show: str; min_sep: float = 1.5; tracking_margin: float = 0.0; endurance: float = 600.0
 class ExportReq(BaseModel):  show: str; drone: int | None = None; all: bool = True; output: str | None = None
 class PreviewReq(BaseModel): spec: str; n: int = 16; min_spacing_m: float = 3.0; spacing_percentile: float = 20.0
+class FlightlogReq(BaseModel): log: str
 
 
 def register_offline(app: FastAPI) -> None:
@@ -86,3 +87,7 @@ def register_offline(app: FastAPI) -> None:
     @app.post("/api/export")
     async def export_show(b: ExportReq):
         return _run(cli.cmd_export, show=b.show, drone=b.drone, all=b.all, output=b.output)
+
+    @app.post("/api/flightlog")
+    async def flightlog(b: FlightlogReq):
+        return _run(cli.cmd_flightlog, log=b.log)

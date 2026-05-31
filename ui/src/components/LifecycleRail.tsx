@@ -5,6 +5,8 @@ const STEPS: { id: View; label: string }[] = [
   { id: "preflight", label: "2 · Preflight" },
   { id: "bringup", label: "3 · Bring-up" },
   { id: "fly", label: "4 · Fly" },
+  { id: "monitor", label: "5 · Monitor" },
+  { id: "review", label: "6 · Review" },
 ];
 
 export default function LifecycleRail() {

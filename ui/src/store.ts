@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { TelemetryFrame, HealthFrame, CmdResult, Frame } from "./types";
 
-export type View = "author" | "preflight" | "bringup" | "fly";
+export type View = "author" | "preflight" | "bringup" | "fly" | "monitor" | "review";
 
 interface State {
   connected: boolean;
