@@ -1,12 +1,18 @@
-import { useState } from "react";
-import { postCmd, acquireCommand, releaseCommand, hasCommand } from "../api";
+import { useEffect, useState } from "react";
+import { postCmd, acquireCommand, releaseCommand, hasCommand, get } from "../api";
 import { useStore } from "../store";
 
 const COLORS = ["red", "green", "blue", "white", "off", "orange", "purple", "cyan", "yellow", "pink"];
-const PATTERNS = ["circle", "grid", "star", "v", "line", "spiral", "diamond", "arrow", "cat"];
 
 export default function CommandDeck() {
   const airborne = useStore((s) => s.telemetry?.airborne ?? false);
+  // Live catalog from the backend (compiler.formations.list_formations) — not hardcoded.
+  const [patterns, setPatterns] = useState<string[]>([]);
+  useEffect(() => {
+    get("/api/formations")
+      .then((r) => setPatterns((r.formations ?? []).filter((p: string) => p !== "text")))
+      .catch(() => {});
+  }, []);
   const [alt, setAlt] = useState(5);
   const [spec, setSpec] = useState("circle");
   const [trans, setTrans] = useState(6);
@@ -38,7 +44,7 @@ export default function CommandDeck() {
         <button className={g()} disabled={!airborne} onClick={() => postCmd("formation", { spec, transition_s: trans })}>Apply</button>
       </div>
       <div className="row chips">
-        {PATTERNS.map((p) => (
+        {patterns.map((p) => (
           <button key={p} className={g()} disabled={!airborne} onClick={() => { setSpec(p); postCmd("formation", { spec: p, transition_s: trans }); }}>{p}</button>
         ))}
       </div>

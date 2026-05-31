@@ -32,7 +32,9 @@ export default function Viewport() {
   const led = telemetry?.led ?? [0, 0.8, 0];
   return (
     <div className="viewport">
-      <Canvas camera={{ position: [25, 25, 25], fov: 50 }}>
+      {/* frameloop="demand": render only when telemetry updates (~10 Hz) or the camera
+          moves, not at the display's 60 Hz — ~6× less GPU work for the same picture. */}
+      <Canvas frameloop="demand" camera={{ position: [25, 25, 25], fov: 50 }}>
         <ambientLight intensity={0.6} />
         <directionalLight position={[20, 40, 10]} intensity={0.8} />
         <Grid args={[120, 120]} cellSize={2} sectionSize={10} infiniteGrid fadeDistance={120}
