@@ -48,6 +48,11 @@ start/pause/abort and monitoring. This is the central architectural gap for hund
 ### 2. Positioning & geodetic origin — 🔴
 **Local NED only — no geodetic origin** (`VenueOrigin` schema field exists but is unused); no common
 datum, no per-drone home reconciliation. **No RTK integration** — consumer GPS (±2–5 m) is unsafe
+> **Status:** ◑ **NED↔geodetic transform** wired — `runtime/show/geodetic.py`
+> (`ned_to_geodetic`/`geodetic_to_ned`, heading-aware, round-trip-tested) turns the local plan into
+> lat/lon/alt; the player reports the origin / RTK requirement at load (`describe_origin`)
+> (`tests/unit/test_geodetic.py`). DEFERRED (hardware): real **RTK** for cm accuracy + per-drone home
+> reconciliation to the datum (this is the math seam for it).
 against the 1.5 m collision margin. (Documented in [HARDWARE.md](HARDWARE.md).)
 
 ### 3. Time synchronization — 🔴

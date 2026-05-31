@@ -197,6 +197,9 @@ async def main(show_path: str, allow_unvalidated: bool = False):
     n       = show.metadata.n_drones
     runtime = SkyforgeRuntime(show)
 
+    from show.geodetic import describe_origin
+    print(f"[run_skyforge] {describe_origin(show.metadata.origin)}")
+
     # Resolve the deployment profile (SITL default, or a $SKYFORGE_FLEET file for
     # HITL/hardware). The SHOW dictates the drone count, so a fleet file must
     # supply at least that many drones — fail loud rather than fly a choreographed
