@@ -110,6 +110,11 @@ re-assigned; no graceful visual degradation. The plan is static once compiled.
 **No wind compensation or weather gating**; trajectories assume ideal tracking. No **battery-aware
 show duration** / per-drone energy budgeting / charge management. No real tracking-error model fed
 back into validation.
+> **Status:** ◑ **battery budgeting** landed — `compiler/energy.py` estimates per-drone usage
+> (hover-time + distance) and `skyforge energy <show> [--endurance S]` flags a show that won't land
+> with reserve (`tests/unit/test_energy.py`). Wind is exercised by enabling Gazebo/PX4 SITL wind
+> (docs/TESTING.md). DEFERRED (hardware): a measured power curve + battery telemetry to calibrate;
+> wind **compensation** (vs. just robustness testing) and weather gating.
 
 ### 10. Hardware LED / payload drivers — 🟡
 **LED is Gazebo-only**; the hardware path is a **no-op stub** — you must implement a real `LedBackend`

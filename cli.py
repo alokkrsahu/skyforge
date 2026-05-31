@@ -163,6 +163,25 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_energy(args: argparse.Namespace) -> int:
+    _add_skyforge_to_path()
+    from core.show_format.reader import from_json, from_msgpack
+    from compiler.energy import estimate_energy, EnergyModel
+
+    path = os.path.abspath(args.show)
+    if not os.path.isfile(path):
+        print(f"ERROR: file not found: {path}", file=sys.stderr)
+        return 1
+    show = from_json(path) if path.endswith(".json") else from_msgpack(path)
+    rep  = estimate_energy(show, EnergyModel(endurance_hover_s=args.endurance,
+                                             reserve_frac=args.reserve))
+    print(f"Duration        : {rep.duration_s:.0f} s")
+    print(f"Worst drone     : #{rep.worst_drone}  using ~{rep.max_used_frac:.0%} of a charge")
+    print(f"Reserve target  : land with >= {args.reserve:.0%}")
+    print(f"Verdict         : {'OK' if rep.fits else 'OVER BUDGET — shorten the show or raise endurance'}")
+    return 0 if rep.fits else 1
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="skyforge",
@@ -197,13 +216,21 @@ def main() -> None:
     p.add_argument("-o", "--output", default=None, metavar="DIR",
                    help="Output directory (default: same as the show)")
 
+    # energy — battery budget check
+    p = sub.add_parser("energy", help="Estimate per-drone battery usage of a show")
+    p.add_argument("show", help="Path to .skyforge or .skyforge.json")
+    p.add_argument("--endurance", type=float, default=600.0, metavar="S",
+                   help="Full-charge hover endurance in seconds (default: 600)")
+    p.add_argument("--reserve", type=float, default=0.20, metavar="F",
+                   help="Required landing reserve fraction (default: 0.20)")
+
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
         sys.exit(1)
 
     handlers = {"compile": cmd_compile, "validate": cmd_validate,
-                "info": cmd_info, "export": cmd_export}
+                "info": cmd_info, "export": cmd_export, "energy": cmd_energy}
     sys.exit(handlers[args.command](args))
 
 

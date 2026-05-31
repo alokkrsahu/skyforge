@@ -131,6 +131,11 @@ each connect their own PX4 instance, hold, and begin the show **together** at th
 `SKYFORGE_T0_EPOCH` (~15 s) — no central setpoint stream. (This is the model that scales to
 thousands; on hardware each agent runs on the drone's companion computer.)
 
+**Battery budget + wind (ROADMAP #9).** `python3 cli.py energy <show.skyforge.json> --endurance 600`
+→ **Pass:** prints the worst drone's usage and an OK / OVER-BUDGET verdict (exit 1 if it won't land
+with reserve). For wind robustness, add a `<wind>`/Wind-system plugin to the arena SDF (or PX4 SITL
+wind params), fly a show, and confirm APF + tracking hold separation under disturbance.
+
 ## Manual — real hardware (deferred; needs a board)
 
 Follow `docs/HITL.md` then `docs/HARDWARE.md`. Order: real MAVLink link (`serial://`/`udp://`) →
