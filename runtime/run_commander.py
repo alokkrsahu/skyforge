@@ -33,6 +33,7 @@ from commander.dynamic_adapter import (
 from commander.commander import FleetCommander
 from commander.cli import cli_loop
 from show.connection import load_profile, FleetProfile, reconcile_commander_fleet_size
+from show.failsafe_provisioning import FailsafeConfig, provision_failsafes
 _MAVSDK_SERVER_BIN = os.path.join(
     os.path.dirname(_mavsdk_mod.__file__), "bin", "mavsdk_server"
 )
@@ -174,6 +175,15 @@ async def main(n: int) -> None:
     abort_event = asyncio.Event()
 
     active = await _connect_fleet(n, profile, runtime)
+
+    # Opt-in: push PX4 failsafes/geofence to every connected drone before arming.
+    # No-op unless $SKYFORGE_FAILSAFE_CONFIG is set (SITL default leaves PX4 as-is).
+    fs_cfg = FailsafeConfig.from_env()
+    if fs_cfg is not None:
+        print("[run_commander] Provisioning PX4 failsafes (SKYFORGE_FAILSAFE_CONFIG)...")
+        for orig_i, drone in active:
+            applied = await provision_failsafes(drone, fs_cfg)
+            print(f"[run_commander] drone {orig_i}: set {len(applied)} failsafe params")
 
     commander = FleetCommander(runtime)
 

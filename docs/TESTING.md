@@ -119,6 +119,12 @@ these confirm behaviour on a running fleet).
 **Pass:** all drones hold at the takeoff pose and begin the polynomial together at that epoch (run two
 hosts/instances with the *same* epoch to see them start in lockstep). Unset → starts when last-ready.
 
+**Failsafe provisioning (ROADMAP #4).**
+`SKYFORGE_FAILSAFE_CONFIG=runtime/failsafe.example.json ./t6_commander.sh 4` → **Pass:** log shows
+`set N failsafe params` per drone; in QGC the geofence radius/RTL alt/battery thresholds reflect the
+config. Then verify the autonomous net (best on a board / HITL): breach the geofence → drone
+Holds/RTLs; kill the offboard link → PX4 acts per `COM_OBL_ACT`. Unset → PX4 left untouched.
+
 ## Manual — real hardware (deferred; needs a board)
 
 Follow `docs/HITL.md` then `docs/HARDWARE.md`. Order: real MAVLink link (`serial://`/`udp://`) →

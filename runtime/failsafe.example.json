@@ -1,0 +1,13 @@
+{
+  "_comment": "PX4 failsafe/geofence provisioning — point $SKYFORGE_FAILSAFE_CONFIG at a copy of this. Pushed to every drone before arming. Values target current PX4 stable; confirm names in HITL.",
+  "geofence_radius_m": 100.0,
+  "geofence_alt_max_m": 50.0,
+  "geofence_action": 2,
+  "rtl_return_alt_m": 30.0,
+  "battery_low_frac": 0.20,
+  "battery_crit_frac": 0.10,
+  "low_bat_action": 2,
+  "offboard_loss_action": 1,
+  "rc_in_mode": 1,
+  "rcl_except_offboard": true
+}

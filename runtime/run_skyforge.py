@@ -32,6 +32,7 @@ from mavsdk import System
 from core.show_format.reader import from_json, from_msgpack
 from show.config import MIN_SEP_M, APF_MIN_SEP_M
 from show.connection import load_profile, FleetProfile, validate_show_fleet_size
+from show.failsafe_provisioning import FailsafeConfig, provision_failsafes
 from show.skyforge_adapter import (
     SkyforgeRuntime, run_drone_skyforge, telemetry_consumer,
 )
@@ -213,6 +214,15 @@ async def main(show_path: str, allow_unvalidated: bool = False):
     if not active:
         print("[run_skyforge] No drones connected — aborting.")
         return
+
+    # Opt-in PX4 failsafe provisioning (no-op unless $SKYFORGE_FAILSAFE_CONFIG set).
+    fs_cfg = FailsafeConfig.from_env()
+    if fs_cfg is not None:
+        print("[run_skyforge] Provisioning PX4 failsafes (SKYFORGE_FAILSAFE_CONFIG)...")
+        for orig_i, drone in active:
+            applied = await provision_failsafes(drone, fs_cfg)
+            print(f"[run_skyforge] drone {orig_i}: set {len(applied)} failsafe params")
+
     print(f"\n[run_skyforge] Starting in 2 s...\n")
     await asyncio.sleep(2.0)
 

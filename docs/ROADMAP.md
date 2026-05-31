@@ -58,8 +58,11 @@ envelope, automated failsafe provisioning, and a **fleet-wide emergency** (one "
 ALL RTL" broadcast). Today `abort()`/`land()`/`hover()` require a live link and act per drone.
 > **Status:** ✅ commander fleet-emergency verbs landed — `hold`/`hover`, `land [now]`, `rtl`
 > (return-to-launch then land), `estop`/`abort` (`runtime/commander/{commander,cli}.py`,
-> `tests/unit/test_commander_emergency.py`). Remaining here: auto-geofence + failsafe provisioning
-> (roadmap build item 4) and a true link-independent broadcast (item 13 / DEFERRED hardware).
+> `tests/unit/test_commander_emergency.py`). **Failsafe provisioning** also landed —
+> `runtime/show/failsafe_provisioning.py` pushes geofence/RTL/battery/RC-loss/offboard-loss params to
+> each drone before arming (opt-in via `$SKYFORGE_FAILSAFE_CONFIG`; `runtime/failsafe.example.json`;
+> `tests/unit/test_failsafe_provisioning.py`). Remaining: a true link-independent broadcast (item 13)
+> and **DEFERRED (hardware)** on-board param confirmation in HITL.
 
 ### 5. Comms / link layer — 🔴 / 🟡
 **No telemetry-radio / WiFi-mesh / broadcast integration** — assumes localhost/private net. No

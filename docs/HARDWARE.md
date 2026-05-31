@@ -137,6 +137,10 @@ HITL-proxy, and real hardware (QGC connects to the board over USB/UDP).
 - **Positioning accuracy.** Collision margins are ~1.5 m; consumer GPS (±2–5 m) is **not** safe —
   use **RTK** for cm-level positioning.
 - **Safety layer.** Geofence, return-to-launch, kill-switch, and battery/RC-loss failsafes belong on
-  the PX4 vehicle. Skyforge's `abort()`/`land()` are *commanded landings*, not a hard emergency stop.
+  the PX4 vehicle. Skyforge's `abort()`/`land()`/`rtl()` are *commanded* actions, not a hard
+  emergency stop. Skyforge can now **provision** those PX4 failsafes for you before arming —
+  set `$SKYFORGE_FAILSAFE_CONFIG` to a JSON file (see `runtime/failsafe.example.json`) and the run
+  scripts push geofence/RTL/battery/RC-loss/offboard-loss params to every drone
+  (`runtime/show/failsafe_provisioning.py`). Confirm the exact param names on your PX4 in HITL.
 
 See `docs/HITL.md` for the single-board hardware-in-the-loop validation step.
