@@ -22,8 +22,10 @@ export default function AuthorPanel() {
     const r = await post("/api/compile", { script, min_sep: minSep, tracking_margin: margin });
     setOut(r.stdout);
     if (r.exit === 0) {
-      const base = script.split("/").pop()!.replace(/\.py$/, "");
-      setCompiledShow(`${script.replace(/[^/]+$/, "")}${base}.skyforge.json`);
+      // Use the actual path the compiler wrote (printed as "  <...>.skyforge.json"),
+      // not a client-side guess — honours --output and the server's path resolution.
+      const m = (r.stdout as string).match(/(\S+\.skyforge\.json)/);
+      if (m) setCompiledShow(m[1]);
     }
   };
 

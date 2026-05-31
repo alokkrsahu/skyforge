@@ -11,6 +11,7 @@ export default function CommandDeck() {
   const [spec, setSpec] = useState("circle");
   const [trans, setTrans] = useState(6);
   const [dist, setDist] = useState(5);
+  const [altSet, setAltSet] = useState(8);
   const [cmd, setCmd] = useState(hasCommand());
 
   const g = (extra = "") => (airborne ? "" : `disabled${extra}`);
@@ -56,8 +57,8 @@ export default function CommandDeck() {
 
       <h3>Altitude &amp; Colour</h3>
       <div className="row">
-        <input type="number" defaultValue={alt} min={1} step={1} id="altset" /> m
-        <button onClick={() => postCmd("altitude", { alt_m: +(document.getElementById("altset") as HTMLInputElement).value })}>Set alt</button>
+        <input type="number" value={altSet} min={1} step={1} onChange={(e) => setAltSet(+e.target.value)} /> m
+        <button onClick={() => postCmd("altitude", { alt_m: altSet })}>Set alt</button>
       </div>
       <div className="row chips">
         {COLORS.map((c) => (
