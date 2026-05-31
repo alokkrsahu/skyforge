@@ -38,8 +38,11 @@ def test_launch_argv():
 
 
 class _FakeProc:
-    def __init__(self): self.pid = 4242; self.returncode = None; self.signals = []
+    _n = 0
+    def __init__(self): _FakeProc._n += 1; self.pid = 4000 + _FakeProc._n; self.returncode = None; self.signals = []
     def send_signal(self, s): self.signals.append(s); self.returncode = -int(s)
+    async def wait(self): return self.returncode if self.returncode is not None else 0
+    def kill(self): self.returncode = -9
 
 
 def test_spawn_and_ordered_teardown(monkeypatch):
@@ -59,3 +62,19 @@ def test_spawn_and_ordered_teardown(monkeypatch):
         assert s.procs == {}
     asyncio.run(body())
     assert any("t6_commander.sh" in a for argv in spawned for a in argv)
+
+
+def test_respawn_stops_old_proc(monkeypatch):
+    procs = []
+    async def fake_exec(*argv, **kw):
+        p = _FakeProc(); procs.append(p); return p
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", fake_exec)
+
+    async def body():
+        s = Supervisor(root="/repo")
+        await s.spawn("sitl", n=4)
+        first = s.procs["sitl"]
+        await s.spawn("sitl", n=8)                 # respawn same target
+        assert first.returncode is not None        # old proc was stopped, not orphaned
+        assert s.procs["sitl"] is not first        # tracking the new one
+    asyncio.run(body())

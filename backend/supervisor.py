@@ -74,8 +74,22 @@ class Supervisor:
         self.root = root or os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         self.procs: dict[str, asyncio.subprocess.Process] = {}
 
+    async def _stop(self, p, grace: float = 5.0) -> None:
+        if p is None or p.returncode is not None:
+            return
+        try:
+            p.send_signal(signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            await asyncio.wait_for(p.wait(), timeout=grace)
+        except (asyncio.TimeoutError, Exception):
+            try: p.kill()
+            except Exception: pass
+
     async def spawn(self, target: str, *, n: int = 4, arena: str = "default",
                     show: str | None = None, opts: dict | None = None) -> int:
+        await self._stop(self.procs.get(target))          # don't orphan a running instance
         argv = launch_argv(self.root, target, n=n, arena=arena, show=show)
         env  = {**os.environ, **compose_env(opts or {})}
         proc = await asyncio.create_subprocess_exec(*argv, env=env, cwd=self.root)
@@ -93,13 +107,11 @@ class Supervisor:
         for name in _TEARDOWN_ORDER:
             p = self.procs.get(name)
             if p is not None and p.returncode is None:
-                try:
-                    p.send_signal(signal.SIGTERM)
-                    killed.append(name)
-                except ProcessLookupError:
-                    pass
-        try:
-            await asyncio.create_subprocess_exec("pkill", "-9", "-f", "mavsdk_server")
+                await self._stop(p)                       # SIGTERM + AWAIT exit (kill if slow)
+                killed.append(name)
+        try:                                              # and actually wait for pkill to finish
+            pk = await asyncio.create_subprocess_exec("pkill", "-9", "-f", "mavsdk_server")
+            await pk.wait()
         except Exception:
             pass
         self.procs.clear()
