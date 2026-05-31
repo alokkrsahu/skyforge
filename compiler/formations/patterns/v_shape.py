@@ -16,4 +16,6 @@ def v_shape(
     tip  = [(0.0, 0.0)] if n % 2 == 1 else []
     left  = [(-k * spacing_m * math.sin(a),  k * spacing_m * math.cos(a)) for k in range(1, half + 1)]
     right = [(-k * spacing_m * math.sin(a), -k * spacing_m * math.cos(a)) for k in range(1, half + 1)]
-    return _centre(tip + left + right)
+    # _centre returns 3-tuples; code patterns honour the flat (dN, dE) contract
+    # (get_formation re-adds dU=0). Keeps every generator's direct output 2-tuple.
+    return [(p[0], p[1]) for p in _centre(tip + left + right)]

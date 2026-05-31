@@ -112,4 +112,6 @@ def text(
     if n is not None:
         pts = _pad_to(pts, n)
 
-    return pts
+    # _centre/_pad_to return 3-tuples; text is flat sky-art, so honour the (dN, dE)
+    # contract for direct callers (get_formation re-adds dU=0 uniformly).
+    return [(p[0], p[1]) for p in pts]

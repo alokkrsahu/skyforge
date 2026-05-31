@@ -165,6 +165,27 @@ def test_csv_2col_stays_flat():
         path.unlink()
 
 
+def test_negative_du_is_clamped_to_zero():
+    # floor safety: a stray negative dU in a data file must never fly below the base
+    name = "tmp_negdu_csv"
+    path = PATTERNS / f"{name}.csv"
+    path.write_text("-1,-1,-10\n1,1,5\n")
+    try:
+        us = sorted(p[2] for p in get_formation(name, 2))
+        assert us == [0.0, 5.0]                            # -10 clamped to 0
+    finally:
+        path.unlink()
+
+
+def test_all_generators_return_2tuples_on_direct_call():
+    # direct generator calls honour the flat (dN, dE) contract uniformly; get_formation
+    # is what normalises to 3-tuples. (Regression: v_shape/star/text once leaked 3-tuples.)
+    from compiler.formations import circle, grid, line, v_shape, star, spiral, text
+    for fn in (circle, grid, line, v_shape, star, spiral):
+        assert all(len(p) == 2 for p in fn(7)), f"{fn.__name__} should return 2-tuples"
+    assert all(len(p) == 2 for p in text("AB"))
+
+
 def test_centre_leaves_du_untouched():
     out = base._centre([(0.0, 0.0, 5.0), (4.0, 4.0, 9.0)])
     assert [p[2] for p in out] == [5.0, 9.0]               # only N,E recentred

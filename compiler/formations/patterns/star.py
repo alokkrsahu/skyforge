@@ -17,4 +17,5 @@ def star(
         r     = r_outer if k % 2 == 0 else r_inner
         angle = math.pi / 2 - k * math.pi / n_points
         verts.append((r * math.cos(angle), r * math.sin(angle)))
-    return _pad_to(verts, n)
+    # _pad_to returns 3-tuples; keep the flat (dN, dE) contract for direct callers.
+    return [(p[0], p[1]) for p in _pad_to(verts, n)]

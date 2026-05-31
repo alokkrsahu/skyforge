@@ -72,6 +72,13 @@ def _load_code_pattern(name: str):
     return None
 
 
+def _clamp_dU(v: float) -> float:
+    # dU is "up above the base plane" — clamp to >= 0 so a stray negative value in a
+    # data file can NEVER compose into a below-ground/below-base hold altitude
+    # (floor safety) and the transit-ceiling stays above the envelope.
+    return v if v > 0.0 else 0.0
+
+
 def _read_csv(path) -> list[tuple[float, float, float]]:
     # Rows are `dN,dE` (flat) or `dN,dE,dU` (volumetric); a missing 3rd column is 0.0.
     pts = []
@@ -80,7 +87,7 @@ def _read_csv(path) -> list[tuple[float, float, float]]:
             if not row or row[0].lstrip().startswith("#"):
                 continue
             dU = float(row[2]) if len(row) > 2 and row[2].strip() != "" else 0.0
-            pts.append((float(row[0]), float(row[1]), dU))
+            pts.append((float(row[0]), float(row[1]), _clamp_dU(dU)))
     return pts
 
 
@@ -89,7 +96,7 @@ def _read_json(path) -> list[tuple[float, float, float]]:
     with open(path) as f:
         data = json.load(f)
     pts = data["points"] if isinstance(data, dict) else data
-    return [(float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 else 0.0) for p in pts]
+    return [(float(p[0]), float(p[1]), _clamp_dU(float(p[2]) if len(p) > 2 else 0.0)) for p in pts]
 
 
 def _load_data_pattern(name: str):
