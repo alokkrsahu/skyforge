@@ -81,6 +81,11 @@ ALL RTL" broadcast). Today `abort()`/`land()`/`hover()` require a live link and 
 **No telemetry-radio / WiFi-mesh / broadcast integration** — assumes localhost/private net. No
 fleet-level link-loss handling, no bandwidth budgeting, and **MAVLink/gRPC are unencrypted**
 (acceptable in a lab, not over a hostile/public RF environment).
+> **Status:** ◑ software layer landed — `runtime/show/broadcast.py`: `FleetBroadcast` is a
+> one-command broadcast (atomic, monotonic-seq; file-backed, works cross-process/host on a shared FS;
+> same `publish()`/`latest()` contract a UDP/RF transport would have), and `link_loss_action` is the
+> fail-safe ladder (ride brief gap → hold → land) (`tests/unit/test_broadcast.py`). DEFERRED
+> (hardware): the real RF/multicast transport + encryption/auth of the command stream.
 
 ### 6. Bulk provisioning & fleet management — 🔴
 **No batch firmware/param flashing**, no automated **`MAV_SYS_ID`** assignment, no
