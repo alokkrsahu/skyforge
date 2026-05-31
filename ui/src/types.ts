@@ -57,7 +57,7 @@ export interface ProcInfo {
 }
 
 export interface ProcFrame      { type: "proc"; procs: Record<string, ProcInfo>; }
-export interface LogFrame       { type: "log"; target: string; line: string; t: number; }
+export interface LogFrame       { type: "log"; target: string; line: string; t: number; level?: string; }
 export interface ReadyFrame     { type: "ready"; target: string; n: number; of: number; }
 export interface LifecycleFrame { type: "lifecycle"; phase: string; msg: string; t: number; }
 export interface BringupFrame   { type: "bringup"; target: string; port: number; pid: number | null; }

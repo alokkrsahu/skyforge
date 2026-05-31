@@ -169,15 +169,28 @@ export default function MissionControl() {
 }
 
 function LogConsole() {
-  const logs   = useStore((s) => s.logs);
-  const filter = useStore((s) => s.logFilter);
+  const logs    = useStore((s) => s.logs);
+  const filter  = useStore((s) => s.logFilter);
   const setFilter = useStore((s) => s.setLogFilter);
-  const clear  = useStore((s) => s.clearLogs);
+  const verbose = useStore((s) => s.logVerbose);
+  const setVerbose = useStore((s) => s.setLogVerbose);
+  const clear   = useStore((s) => s.clearLogs);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
   const targets = Array.from(new Set(logs.map((l) => l.target)));
-  const shown = (filter === "all" ? logs : logs.filter((l) => l.target === filter)).slice(-600);
+  const byTarget = filter === "all" ? logs : logs.filter((l) => l.target === filter);
+  // Hide known-benign vendor noise unless verbose; count what's hidden so it's never silent.
+  const visible = verbose ? byTarget : byTarget.filter((l) => l.level !== "noise");
+  const hidden = byTarget.length - visible.length;
+  // Collapse consecutive identical lines into one with a ×N badge (kills repeat floods).
+  const rows: { line: string; target: string; level?: string; n: number }[] = [];
+  for (const l of visible.slice(-1200)) {
+    const prev = rows[rows.length - 1];
+    if (prev && prev.line === l.line && prev.target === l.target) prev.n++;
+    else rows.push({ line: l.line, target: l.target, level: l.level, n: 1 });
+  }
+  const shown = rows.slice(-500);
 
   useEffect(() => { const el = ref.current; if (el && stick.current) el.scrollTop = el.scrollHeight; });
   const onScroll = () => { const el = ref.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; };
@@ -190,12 +203,16 @@ function LogConsole() {
           <button className={filter === "all" ? "on" : ""} onClick={() => setFilter("all")}>all</button>
           {targets.map((t) => <button key={t} className={filter === t ? "on" : ""} onClick={() => setFilter(t)}>{t}</button>)}
         </div>
+        <button className={`btn-ghost sm ${verbose ? "on" : ""}`} onClick={() => setVerbose(!verbose)}
+                title="show benign Gazebo/transport noise">verbose{!verbose && hidden ? ` (${hidden})` : ""}</button>
         <button className="btn-ghost sm" onClick={clear}>clear</button>
       </div>
       <div className="console-body" ref={ref} onScroll={onScroll}>
         {shown.length === 0 && <div className="empty">No process output yet — launch the stack or start a process above.</div>}
         {shown.map((l, i) => (
-          <div key={i} className="logline"><span className={`tag tag-${l.target}`}>{l.target}</span>{l.line}</div>
+          <div key={i} className={`logline lvl-${l.level ?? "info"}`}>
+            <span className={`tag tag-${l.target}`}>{l.target}</span>{l.line}{l.n > 1 ? <span className="rep"> ×{l.n}</span> : null}
+          </div>
         ))}
       </div>
     </section>

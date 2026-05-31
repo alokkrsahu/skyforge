@@ -35,6 +35,28 @@ from .pubsub import broadcast
 # successfully" lines go to /tmp/px4_sitl_*.log, which the captured stdout never sees).
 _T1_READY = re.compile(r"\[t1\]\s+(\d+)\s*/\s*(\d+)\s+drones fully started")
 
+# Streamed log hygiene: strip terminal colour codes (they render as garbage in the UI console),
+# and tag a level so the console can hide known-benign vendor floods (Gazebo SDF warnings,
+# gz-transport startup chatter, PX4 mavlink ack/ignore noise) by default while keeping real
+# errors/warnings visible. These are confirmed-harmless and otherwise bury useful output.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_NOISE_SUBSTR = (
+    "gz_frame_id", "not defined in sdf",          # Gazebo SDF parse warnings (stock x500 model)
+    "nodeshared", "host unreachable",             # gz-transport service chatter at startup
+    "vehicle_command_ack lost",                   # mavlink ack-buffer overflow during the boot burst
+    "ignore command",                             # PX4 ignoring duplicate/unsupported MAVLink commands
+    "deprecationwarning",
+)
+def _log_level(line: str) -> str:
+    low = line.lower()
+    if any(s in low for s in _NOISE_SUBSTR):
+        return "noise"
+    if "error" in low or "fatal" in low or "traceback" in low or "segfault" in low or "critical" in low:
+        return "error"
+    if "warn" in low:
+        return "warn"
+    return "info"
+
 # launch name → (script under runtime/, is_long_running)
 LAUNCHERS = {
     "sitl":      ("t1_sitl.sh",       True),
@@ -289,10 +311,14 @@ class Supervisor:
                 raw = await proc.stdout.readline()
                 if not raw:                               # EOF — the process closed its pipe
                     break
-                line = raw.decode("utf-8", "replace").rstrip("\n")
-                frame = {"type": "log", "target": target, "line": line, "t": time.monotonic()}
-                ring.append(frame)
-                self._broadcast(frame)
+                line = _ANSI_RE.sub("", raw.decode("utf-8", "replace")).rstrip()
+                if not line:                              # drop blank lines
+                    continue
+                frame = {"type": "log", "target": target, "line": line,
+                         "t": time.monotonic(), "level": _log_level(line)}
+                if frame["level"] != "noise":             # keep the backlog ring useful (no flood)
+                    ring.append(frame)
+                self._broadcast(frame)                    # stream all (the console hides noise by default)
                 self._evaluate_readiness(target, line)
             code = await proc.wait()
             self._set_state(target, "exited", code=code)
@@ -357,9 +383,15 @@ class Supervisor:
                         f.seek(pos); chunk = f.read(); pos = f.tell()
                 except OSError:
                     pass
-                for line in chunk.splitlines():
-                    frame = {"type": "log", "target": target, "line": line, "t": time.monotonic()}
-                    ring.append(frame); self._broadcast(frame)
+                for raw in chunk.splitlines():
+                    line = _ANSI_RE.sub("", raw).rstrip()
+                    if not line:
+                        continue
+                    frame = {"type": "log", "target": target, "line": line,
+                             "t": time.monotonic(), "level": _log_level(line)}
+                    if frame["level"] != "noise":
+                        ring.append(frame)
+                    self._broadcast(frame)
                     self._evaluate_readiness(target, line)
                 await asyncio.sleep(0.3)
         except asyncio.CancelledError:

@@ -180,6 +180,10 @@ table.grid tr.stale td { color: var(--danger); }
                 padding: var(--sp-2); height: 300px; overflow-y: auto; font: 12px/1.5 var(--mono); }
 .logline { color: #b6c2d6; white-space: pre-wrap; word-break: break-word; }
 .logline .tag { display: inline-block; min-width: 76px; color: var(--accent); margin-right: var(--sp-2); opacity: .8; }
+.logline.lvl-error { color: var(--danger); } .logline.lvl-warn { color: var(--warn); }
+.logline.lvl-noise { color: var(--text-dim); }
+.logline .rep { color: var(--text-dim); font-style: italic; }
+.tabs button.on, .btn-ghost.on { background: var(--surface-3); color: #cfe0ff; border-color: var(--border-2); }
 .console-body .empty, .empty { color: var(--text-dim); }
 
 /* ── 3D viewport ───────────────────────────────────────────────────────────── */

@@ -7,7 +7,7 @@ import type {
 
 export type View = "mission" | "author" | "preflight" | "fly" | "monitor" | "review";
 
-export interface LogLine { target: string; line: string; t: number; }
+export interface LogLine { target: string; line: string; t: number; level?: string; }
 
 interface State {
   // ── gateway lifecycle socket (always-on, same-origin) ──
@@ -19,6 +19,7 @@ interface State {
   bringupMsg: string | null;
   commanderPort: number | null;          // arrives via the `bringup` frame / a manual spawn
   logFilter: string;                     // "all" | a target
+  logVerbose: boolean;                   // show known-benign noise (off → clean console)
 
   // ── bridge telemetry socket (only once a commander is up) ──
   bridgeConnected: boolean;
@@ -36,6 +37,7 @@ interface State {
   setArmed: (a: boolean) => void;
   setCompiledShow: (p: string | null) => void;
   setLogFilter: (t: string) => void;
+  setLogVerbose: (v: boolean) => void;
   clearLogs: () => void;
 }
 
@@ -48,6 +50,7 @@ export const useStore = create<State>((set) => ({
   bringupMsg: null,
   commanderPort: null,
   logFilter: "all",
+  logVerbose: false,
   bridgeConnected: false,
   telemetry: null,
   health: null,
@@ -60,6 +63,7 @@ export const useStore = create<State>((set) => ({
   setArmed: (armed) => set({ armed }),
   setCompiledShow: (compiledShow) => set({ compiledShow }),
   setLogFilter: (logFilter) => set({ logFilter }),
+  setLogVerbose: (logVerbose) => set({ logVerbose }),
   clearLogs: () => set({ logs: [] }),
 }));
 
@@ -97,7 +101,7 @@ function handleGateway(f: GatewayFrame): void {
       }
       break;
     case "log":
-      useStore.setState((s) => ({ logs: [...s.logs, { target: f.target, line: f.line, t: f.t }].slice(-2000) }));
+      useStore.setState((s) => ({ logs: [...s.logs, { target: f.target, line: f.line, t: f.t, level: f.level }].slice(-2000) }));
       break;
     case "ready":
       useStore.setState({ sitlReady: { n: f.n, of: f.of } });

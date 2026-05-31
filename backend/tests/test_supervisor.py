@@ -121,6 +121,35 @@ def test_reader_streams_log_frames(monkeypatch):
     asyncio.run(body())
 
 
+def test_log_noise_classified_and_kept_out_of_backlog(monkeypatch):
+    hub = _Hub(); q = hub.sink()
+    lines = [
+        "\x1b[1;33mWarning [Utils.cc:132]\x1b[0m gz_frame_id not defined in SDF.",  # noise + ANSI
+        "ERROR [mavlink] something actually broke",                                  # real error
+        "[t5] Launching show: x.json",                                               # info
+        "",                                                                          # blank → dropped
+    ]
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", _fake_exec_returning([lines]))
+
+    async def body():
+        s = Supervisor(root="/repo", app=hub)
+        await s.spawn("player", n=1, show="x.json")
+        await asyncio.sleep(0.05)
+        logs = _drain(q, "log")
+        by_line = {f["line"]: f["level"] for f in logs}
+        # ANSI stripped; noise tagged; blank dropped; error/info tagged
+        assert any("gz_frame_id" in l and "\x1b" not in l for l in by_line)
+        assert by_line.get("Warning [Utils.cc:132] gz_frame_id not defined in SDF.") == "noise"
+        assert by_line.get("ERROR [mavlink] something actually broke") == "error"
+        assert "" not in by_line
+        # the backlog ring excludes noise (so a warning burst can't evict useful lines)
+        ring_lines = [f["line"] for f in s.rings["player"]]
+        assert not any("gz_frame_id" in l for l in ring_lines)
+        assert "ERROR [mavlink] something actually broke" in ring_lines
+        await s.teardown()
+    asyncio.run(body())
+
+
 def test_sitl_readiness_transitions(monkeypatch):
     hub = _Hub(); q = hub.sink()
     # t1 prints fleet readiness to its own stdout; readiness is N/M, not per-instance markers.
