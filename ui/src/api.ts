@@ -23,7 +23,7 @@ export interface LaunchOpts { gcs?: string; led?: string; blackbox?: string; aut
 export async function launch(body: { n: number; arena: string; opts: LaunchOpts; mode?: string }): Promise<any> {
   return post("/api/launch", body);            // one-click: backend sequences SITL → commander
 }
-export async function bringup(body: { target: string; n: number; arena: string; opts: LaunchOpts; mode?: string }): Promise<any> {
+export async function bringup(body: { target: string; n: number; arena: string; opts: LaunchOpts; mode?: string; show?: string }): Promise<any> {
   return post("/api/bringup", body);           // granular per-process spawn; mode: background|terminal
 }
 export async function teardown(): Promise<any> { return post("/api/teardown"); }

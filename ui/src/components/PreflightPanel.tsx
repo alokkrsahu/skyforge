@@ -31,7 +31,7 @@ export default function PreflightPanel() {
       {verdict && (
         <div className={`verdict ${verdict === "GO" ? "go" : "nogo"}`}>
           {verdict}
-          {verdict === "GO" && <button className="proceed" onClick={() => setView("bringup")}>Proceed →</button>}
+          {verdict === "GO" && <button className="proceed" onClick={() => setView("mission")}>Proceed → Mission Control</button>}
         </div>
       )}
       {out && <pre className="stdout">{out}</pre>}

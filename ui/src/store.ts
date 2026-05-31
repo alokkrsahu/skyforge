@@ -5,8 +5,7 @@ import type {
   GatewayFrame, ProcInfo,
 } from "./types";
 
-// "mission" (Mission Control) is added in the next stage; "bringup" remains until then.
-export type View = "mission" | "author" | "preflight" | "bringup" | "fly" | "monitor" | "review";
+export type View = "mission" | "author" | "preflight" | "fly" | "monitor" | "review";
 
 export interface LogLine { target: string; line: string; t: number; }
 
@@ -53,7 +52,7 @@ export const useStore = create<State>((set) => ({
   telemetry: null,
   health: null,
   cmdLog: [],
-  view: "author",
+  view: "mission",
   armed: false,
   compiledShow: null,
   pushCmd: (r) => set((s) => ({ cmdLog: [r, ...s.cmdLog].slice(0, 60) })),

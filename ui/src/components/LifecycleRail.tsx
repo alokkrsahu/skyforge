@@ -1,9 +1,9 @@
 import { useStore, type View } from "../store";
 
 const STEPS: { id: View; label: string }[] = [
-  { id: "author", label: "1 · Author" },
-  { id: "preflight", label: "2 · Preflight" },
-  { id: "bringup", label: "3 · Bring-up" },
+  { id: "mission", label: "1 · Mission Control" },
+  { id: "author", label: "2 · Author" },
+  { id: "preflight", label: "3 · Preflight" },
   { id: "fly", label: "4 · Fly" },
   { id: "monitor", label: "5 · Monitor" },
   { id: "review", label: "6 · Review" },

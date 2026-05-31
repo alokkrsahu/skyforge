@@ -6,7 +6,7 @@ import CommandLog from "./components/CommandLog";
 import LifecycleRail from "./components/LifecycleRail";
 import AuthorPanel from "./components/AuthorPanel";
 import PreflightPanel from "./components/PreflightPanel";
-import BringupPanel from "./components/BringupPanel";
+import MissionControl from "./components/MissionControl";
 import MonitorPanel from "./components/MonitorPanel";
 import ReviewPanel from "./components/ReviewPanel";
 import { useStore } from "./store";
@@ -28,9 +28,9 @@ export default function App() {
       <div className="body">
         <LifecycleRail />
         <main>
+          {view === "mission" && <MissionControl />}
           {view === "author" && <AuthorPanel />}
           {view === "preflight" && <PreflightPanel />}
-          {view === "bringup" && <BringupPanel />}
           {view === "fly" && <FlyView />}
           {view === "monitor" && <MonitorPanel />}
           {view === "review" && <ReviewPanel />}
