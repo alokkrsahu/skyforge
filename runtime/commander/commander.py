@@ -242,3 +242,33 @@ class FleetCommander:
             else:
                 lines.append(f"  drone {i:2d}  (no telemetry yet)")
         return "\n".join(lines)
+
+    async def snapshot(self) -> dict:
+        """Structured live state for a UI — the read seam (vs the human-text `status`).
+        Reads ONLY DynamicRuntime (the 10 Hz telemetry cache) and uses peek_target (no
+        side effects), so it is safe to run on the control loop. Never touches a MAVSDK
+        stream (the no-wait_for invariant). Distances in metres; pos/vel are global NED
+        (D down, negative = up); `stale` = no telemetry > 2 s while airborne."""
+        rt  = self.runtime
+        now = time.monotonic()
+        tr  = None
+        if rt.transition:
+            remaining = max(0.0, rt.transition.duration_s - (now - rt.transition.start_time))
+            tr = {"remaining_s": round(remaining, 2), "duration_s": rt.transition.duration_s}
+        drones = []
+        for i in range(rt.n_drones):
+            ts    = rt.position_timestamps.get(i)
+            stale = ts is None or (rt.airborne and now - ts > 2.0)
+            drones.append({
+                "id":     i,
+                "pos":    rt.current_positions.get(i),
+                "vel":    rt.current_velocities.get(i),
+                "target": rt.peek_target(i, now),
+                "stale":  stale,
+            })
+        return {
+            "airborne": rt.airborne, "abort": rt.abort_flag, "alt_m": rt.alt_m,
+            "led": list(rt.led_color), "center": list(rt.formation_center),
+            "flight_cycle": rt.flight_cycle, "ready": [rt.ready_count, rt.ready_target],
+            "transition": tr, "drones": drones,
+        }

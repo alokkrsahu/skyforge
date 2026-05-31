@@ -116,7 +116,7 @@ def apply_health_policy(
 async def monitor_fleet_health(
     runtime: "DynamicRuntime", abort_event: asyncio.Event,
     interval: float = 1.0, timeout: float = DROPOUT_TIMEOUT_S,
-    black_box=None, abort_policy=None,
+    black_box=None, abort_policy=None, health_q=None,
 ) -> None:
     """Background task: once per `interval`, apply the dropout health policy and log.
 
@@ -130,14 +130,14 @@ async def monitor_fleet_health(
             action = "ABORTING" if runtime.fail_mode == "abort" else "continuing without them"
             print(f"[monitor] Lost drones {lost} (no telemetry > {timeout:.0f}s) — {action}")
 
-        if black_box is not None or abort_policy is not None:
+        if black_box is not None or abort_policy is not None or health_q is not None:
             healths = []
             for i in range(runtime.n_drones):
                 pos = runtime.current_positions.get(i)
                 age = now - runtime.position_timestamps.get(i, now - 1e9)
                 err = None
                 if pos is not None:
-                    tN, tE, tD = runtime.target_ned(i, now)
+                    tN, tE, tD = runtime.peek_target(i, now)   # read-only (never clear a transition)
                     err = ((pos[0] - tN) ** 2 + (pos[1] - tE) ** 2 + (pos[2] - tD) ** 2) ** 0.5
                 healths.append(DroneHealth(drone_id=i, armed=runtime.airborne, age_s=age, pos_error_m=err))
             summary = summarize(healths, runtime.n_drones, stale_age_s=timeout)
@@ -145,6 +145,17 @@ async def monitor_fleet_health(
                 black_box.record({"t": now, "n_seen": summary.n_seen, "n_lost": summary.n_lost,
                                   "max_pos_error_m": summary.max_pos_error_m,
                                   "min_battery_frac": summary.min_battery_frac})
+            if health_q is not None:                           # UI dashboard fan-out (latest-wins)
+                rec = {"type": "health", "n_total": summary.n_total, "n_seen": summary.n_seen,
+                       "n_lost": summary.n_lost, "min_battery_frac": summary.min_battery_frac,
+                       "max_pos_error_m": summary.max_pos_error_m, "anomalies": summary.anomalies}
+                try:
+                    health_q.put_nowait(rec)
+                except Exception:
+                    try:
+                        health_q.get_nowait(); health_q.put_nowait(rec)   # drop oldest
+                    except Exception:
+                        pass
             if abort_policy is not None and runtime.airborne:
                 fire, why = should_auto_abort(summary, abort_policy)
                 if fire:
@@ -227,6 +238,19 @@ class DynamicRuntime:
         if alpha >= 1.0:
             self.transition = None
         return pos
+
+    def peek_target(self, drone_id: int, now: float) -> tuple[float, float, float]:
+        """Like target_ned but WITHOUT the finished-transition clear — pure/read-only,
+        safe to call OFF the control tick (e.g. the web snapshot push path). target_ned
+        mutates (`self.transition = None` at alpha>=1); the UI must not trigger that."""
+        if self.transition is None:
+            return self.hold_pos[drone_id]
+        t = self.transition
+        alpha = _ease_inout(max(0.0, min(1.0, (now - t.start_time) / t.duration_s)))
+        s, e = t.start_pos[drone_id], t.end_pos[drone_id]
+        return (s[0] + (e[0] - s[0]) * alpha,
+                s[1] + (e[1] - s[1]) * alpha,
+                s[2] + (e[2] - s[2]) * alpha)
 
     def start_transition(
         self,

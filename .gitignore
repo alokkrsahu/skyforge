@@ -13,3 +13,9 @@ venv/
 .env
 .pytest_cache/
 *.skyforge
+
+# Operator UI frontend (ui/)
+node_modules/
+ui/dist/
+ui/.vite/
+*.tsbuildinfo

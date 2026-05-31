@@ -18,11 +18,14 @@ skyforge = "cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio"]
+# Operator UI backend. Kept OUT of core so the `skyforge` CLI installs web-free; mavsdk is
+# runtime-only (present via the PX4 venv) and declared here for the UI bridge.
+ui = ["fastapi", "uvicorn[standard]", "websockets", "httpx", "mavsdk"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*", "compiler*", "shows*"]
+include = ["core*", "compiler*", "shows*", "backend*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "backend/tests"]
 asyncio_mode = "auto"

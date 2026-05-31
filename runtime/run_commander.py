@@ -190,7 +190,19 @@ async def main(n: int) -> None:
     # Build labelled coroutines so exception reporting stays correct regardless
     # of how many helper tasks we add. Each drone gets BOTH a control loop and a
     # telemetry_consumer (plain async-for stream → cache; never wait_for'd).
-    labelled = [("cli", cli_loop(commander))]
+    # Front-end: the web bridge (SKYFORGE_WEB) REPLACES the stdin REPL — running both
+    # would leave cli_loop blocking on input() in a detached process. The web task hosts
+    # FastAPI on THIS loop and calls FleetCommander directly (same cooperative scheduling
+    # as cli_loop; no lock). Default (no env) is byte-for-byte the existing REPL.
+    health_q = None
+    if os.environ.get("SKYFORGE_WEB", "").strip():
+        import sys as _sys, os as _os
+        _sys.path.insert(0, _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..")))
+        from backend.serve_web import serve_web
+        health_q = asyncio.Queue(maxsize=4)
+        labelled = [("web", serve_web(commander, runtime, abort_event, health_q))]
+    else:
+        labelled = [("cli", cli_loop(commander))]
     for orig_i, drone in active:
         labelled.append((f"drone {orig_i}",
                          run_drone_commander(orig_i, drone, runtime, abort_event,
@@ -211,7 +223,8 @@ async def main(n: int) -> None:
         from show.fleet_monitor import AbortPolicy
         _policy = AbortPolicy()
     labelled.append(("health_monitor",
-                     monitor_fleet_health(runtime, abort_event, black_box=_bb, abort_policy=_policy)))
+                     monitor_fleet_health(runtime, abort_event, black_box=_bb,
+                                          abort_policy=_policy, health_q=health_q)))
 
     results = await asyncio.gather(*(c for _, c in labelled), return_exceptions=True)
 
