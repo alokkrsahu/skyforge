@@ -157,6 +157,44 @@ class StubLed(LedBackend):
         return None
 
 
+class HardwareLedDriver(LedBackend):
+    """Template for a REAL LED driver (MAVLink / DroneCAN / companion-computer GPIO/serial).
+
+    Subclass and override :meth:`_emit`, OR construct with an async ``sender(drone_id,
+    r, g, b)``. A fleet-wide bounded semaphore (like the Gazebo backends) keeps a slow
+    bus from starving the offboard setpoint stream. With no driver wired it logs once
+    and no-ops, so selecting ``hardware`` without an implementation degrades safely
+    instead of crashing the show.
+
+    DEFERRED (hardware): the actual bus transport — supply ``sender`` or override ``_emit``.
+    """
+    _MAX_CONCURRENT = 16
+
+    def __init__(self, sender=None, max_concurrent: int | None = None) -> None:
+        self._sender = sender
+        self._sem: "asyncio.Semaphore | None" = None
+        self._max = max_concurrent or self._MAX_CONCURRENT
+        self._warned = False
+
+    def _semaphore(self) -> "asyncio.Semaphore":
+        if self._sem is None:
+            self._sem = asyncio.Semaphore(self._max)
+        return self._sem
+
+    async def _emit(self, drone_id: int, r: float, g: float, b: float) -> None:
+        """Drive the LED bus. Default delegates to the injected sender (or warns once)."""
+        if self._sender is not None:
+            await self._sender(drone_id, r, g, b)
+        elif not self._warned:
+            self._warned = True
+            print(f"[led] {LED_BACKEND_ENV}=hardware but no driver wired — LED no-op. "
+                  f"Subclass HardwareLedDriver._emit or pass a sender. See docs/HARDWARE.md.")
+
+    async def set_led(self, drone_id: int, r: float, g: float, b: float) -> None:
+        async with self._semaphore():
+            await self._emit(drone_id, r, g, b)
+
+
 def make_led_backend(mode: str) -> LedBackend:
     """Return the LED backend for a runtime mode ("player" | "commander").
 
@@ -166,6 +204,8 @@ def make_led_backend(mode: str) -> LedBackend:
     choice = (os.environ.get(LED_BACKEND_ENV) or "gazebo").strip().lower()
     if choice == "stub":
         return StubLed()
+    if choice == "hardware":
+        return HardwareLedDriver()
     if choice not in ("gazebo", ""):
         print(f"[led] unknown {LED_BACKEND_ENV}={choice!r}; using 'gazebo'.")
     if mode == "commander":

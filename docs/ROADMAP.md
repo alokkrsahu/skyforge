@@ -119,6 +119,10 @@ back into validation.
 ### 10. Hardware LED / payload drivers — 🟡
 **LED is Gazebo-only**; the hardware path is a **no-op stub** — you must implement a real `LedBackend`
 (`runtime/show/led_backend.py`) for your LED hardware. No support for other payloads (pyro, streamers).
+> **Status:** ◑ `HardwareLedDriver` template added — `$SKYFORGE_LED_BACKEND=hardware` selects it;
+> subclass `_emit` or pass an async `sender(drone_id,r,g,b)` for your bus (MAVLink/DroneCAN/serial),
+> with the fleet-wide concurrency semaphore already in place; no driver wired → safe no-op
+> (`tests/unit/test_hardware_led.py`). DEFERRED (hardware): the actual bus transport; other payloads.
 
 ### 11. Show-authoring tooling — 🟢 / 🟡
 **Blender → formation is ad-hoc** (manual via MCP) — no packaged export add-on/pipeline. No
