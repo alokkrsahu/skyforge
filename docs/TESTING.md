@@ -108,6 +108,12 @@ these confirm behaviour on a running fleet).
 - `land now` → **Pass:** immediate descent (no per-drone stagger). `land` alone staggers.
 - `estop` (alias of `abort`) → **Pass:** immediate land, no stagger.
 
+**Mid-show resilience (ROADMAP #8).** Airborne fleet, then kill one drone's link
+(`pkill -f "mavsdk_server.*5005<i>"` or stop one PX4 instance):
+- default (`SKYFORGE_FAIL_MODE=continue`) → **Pass:** `[monitor] Lost drones [i] … continuing`; the
+  survivors keep flying the formation (the lost drone drops out of APF/sync, no ghost chase).
+- `SKYFORGE_FAIL_MODE=abort ./t6_commander.sh N` → **Pass:** the same loss triggers a fleet emergency land.
+
 ## Manual — real hardware (deferred; needs a board)
 
 Follow `docs/HITL.md` then `docs/HARDWARE.md`. Order: real MAVLink link (`serial://`/`udp://`) →

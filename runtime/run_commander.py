@@ -28,6 +28,7 @@ from mavsdk import System
 
 from commander.dynamic_adapter import (
     DynamicRuntime, run_drone_commander, led_watcher, telemetry_consumer,
+    monitor_fleet_health,
 )
 from commander.commander import FleetCommander
 from commander.cli import cli_loop
@@ -189,6 +190,7 @@ async def main(n: int) -> None:
         labelled.append((f"telemetry {orig_i}",
                          telemetry_consumer(drone, orig_i, runtime, hn, he, abort_event)))
     labelled.append(("led_watcher", led_watcher(runtime, abort_event)))
+    labelled.append(("health_monitor", monitor_fleet_health(runtime, abort_event)))
 
     results = await asyncio.gather(*(c for _, c in labelled), return_exceptions=True)
 

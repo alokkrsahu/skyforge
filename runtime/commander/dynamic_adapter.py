@@ -7,6 +7,7 @@ Supports multiple takeoff/land cycles within a single session.
 """
 import asyncio
 import math
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -71,11 +72,58 @@ async def telemetry_consumer(
                     pv.velocity.east_m_s,
                     pv.velocity.down_m_s,
                 )
+                runtime.position_timestamps[drone_id] = time.monotonic()
         except asyncio.CancelledError:
             raise
         except Exception:
             # Stream ended/errored — back off briefly and re-subscribe.
             await asyncio.sleep(0.5)
+
+
+# ── Mid-show resilience: detect & handle a drone whose telemetry goes stale ─────
+
+DROPOUT_TIMEOUT_S = 2.0   # no telemetry for this long (while airborne) → "lost"
+
+
+def apply_health_policy(
+    runtime: "DynamicRuntime", now: float, timeout: float = DROPOUT_TIMEOUT_S,
+) -> list[int]:
+    """Detect drones whose telemetry has gone stale and act per runtime.fail_mode.
+    Returns the list of lost drone ids (empty when none / not airborne).
+
+      * "abort"    — any loss triggers a fleet emergency land (abort_flag + airborne off).
+      * "continue" — drop the lost drone(s) from the live caches so APF and the fleet
+                     sync stop chasing a ghost; the show goes on with the survivors.
+
+    Only acts while airborne (a drone that never came up is handled by the sync barrier).
+    """
+    if not runtime.airborne:
+        return []
+    lost = [i for i, ts in list(runtime.position_timestamps.items()) if now - ts > timeout]
+    if not lost:
+        return []
+    if runtime.fail_mode == "abort":
+        runtime.abort_flag = True
+        runtime.airborne   = False
+    else:   # graceful degradation
+        for i in lost:
+            runtime.current_positions.pop(i, None)
+            runtime.current_velocities.pop(i, None)
+            runtime.position_timestamps.pop(i, None)
+    return lost
+
+
+async def monitor_fleet_health(
+    runtime: "DynamicRuntime", abort_event: asyncio.Event,
+    interval: float = 1.0, timeout: float = DROPOUT_TIMEOUT_S,
+) -> None:
+    """Background task: once per `interval`, apply the dropout health policy and log."""
+    while not abort_event.is_set():
+        lost = apply_health_policy(runtime, time.monotonic(), timeout)
+        if lost:
+            action = "ABORTING" if runtime.fail_mode == "abort" else "continuing without them"
+            print(f"[monitor] Lost drones {lost} (no telemetry > {timeout:.0f}s) — {action}")
+        await asyncio.sleep(interval)
 
 
 async def led_watcher(runtime: "DynamicRuntime", abort_event: asyncio.Event) -> None:
@@ -127,6 +175,11 @@ class DynamicRuntime:
         self.flight_cycle = 0
         self.ready_count  = 0   # drones that entered offboard this flight
         self.ready_target = 0   # set from main() after connect
+        # Mid-show resilience: last telemetry wall-clock per drone (stamped by
+        # telemetry_consumer). A drone whose telemetry goes stale is "lost"; the
+        # fail_mode decides what the fleet does about it.
+        self.position_timestamps: dict[int, float] = {}
+        self.fail_mode = os.environ.get("SKYFORGE_FAIL_MODE", "continue").lower()
 
     def target_ned(self, drone_id: int, now: float) -> tuple[float, float, float]:
         if self.transition is None:

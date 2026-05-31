@@ -75,6 +75,10 @@ handful, not thousands.
 ### 8. Mid-show resilience — 🟡
 **No dynamic failure handling** — if a drone drops out, neighbours don't adapt and the figure isn't
 re-assigned; no graceful visual degradation. The plan is static once compiled.
+> **Status:** ◑ dropout **detection + policy** landed — `monitor_fleet_health` flags a drone whose
+> telemetry goes stale and applies `SKYFORGE_FAIL_MODE` (`continue` drops it from APF/sync so the show
+> goes on; `abort` lands the fleet) (`runtime/commander/dynamic_adapter.py`, `tests/unit/test_resilience.py`).
+> Remaining: dynamic slot **re-assignment** so the figure visually closes the gap.
 
 ### 9. Environment / wind / battery — 🟡
 **No wind compensation or weather gating**; trajectories assume ideal tracking. No **battery-aware
