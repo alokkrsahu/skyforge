@@ -159,9 +159,11 @@ the live arming path, no operator console/runbook.
 > ([RUNBOOK.md](RUNBOOK.md)) landed (`tests/unit/test_fleet_monitor.py`, `tests/integration/test_cli.py`).
 > **Graphical operator console** now in progress — `backend/` (in-loop FastAPI bridge: REST control
 > + telemetry/health/cmd_result WebSocket, gated by `SKYFORGE_WEB`) + `ui/` (React+three.js SPA: live
-> 3D fleet view, command deck, emergency rail). Phase 0 (bridge) + Phase 1 (MVP fly page) landed;
-> see `docs/RUNBOOK.md`/`ui/README.md`. Remaining: author/preflight pages + arm-gate, bring-up form,
-> health dashboard, flight-log replay, gateway split (Phases 2–4); airspace/NOTAM integration.
+> 3D fleet view, command deck, emergency rail). Phases 0–2 landed: bridge + MVP fly page +
+> **offline plane** (gateway `backend/app.py` wrapping compile/validate/info/energy/preflight/export +
+> formation catalog/preview) with the **lifecycle rail + arm-gate** (Fly locked until preflight=GO) and
+> a bring-up env form. See `docs/RUNBOOK.md`/`ui/README.md`. Remaining: health dashboard, flight-log
+> replay, gateway-spawns-commander split (Phase 3), scale paths + multi-operator (Phase 4); airspace/NOTAM.
 
 ---
 

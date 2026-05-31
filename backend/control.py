@@ -124,6 +124,8 @@ def build_app(commander, runtime, abort_event, health_q=None) -> FastAPI:
     app.state.cmd_q       = asyncio.Queue(maxsize=64)   # cmd_result echo stream
     register_control(app)
     register_ws(app)
+    from .offline import register_offline               # offline plane available live too
+    register_offline(app)
     _mount_ui(app)
     return app
 

@@ -13,3 +13,16 @@ export async function postCmd(verb: string, body: Record<string, unknown> = {}):
 export async function killSession(): Promise<void> {
   await fetch("/api/session/kill", { method: "POST" });
 }
+
+// Generic JSON POST/GET for the offline plane (compile/validate/preflight/formations…).
+export async function post(path: string, body: Record<string, unknown> = {}): Promise<any> {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return r.json();
+}
+export async function get(path: string): Promise<any> {
+  return (await fetch(path)).json();
+}

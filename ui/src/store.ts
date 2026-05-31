@@ -1,12 +1,20 @@
 import { create } from "zustand";
 import type { TelemetryFrame, HealthFrame, CmdResult, Frame } from "./types";
 
+export type View = "author" | "preflight" | "bringup" | "fly";
+
 interface State {
   connected: boolean;
   telemetry: TelemetryFrame | null;
   health: HealthFrame | null;
   cmdLog: CmdResult[];
+  view: View;
+  armed: boolean;                      // preflight GO → Fly unlocked
+  compiledShow: string | null;         // path of the last compiled/selected .skyforge.json
   pushCmd: (r: CmdResult) => void;
+  setView: (v: View) => void;
+  setArmed: (a: boolean) => void;
+  setCompiledShow: (p: string | null) => void;
 }
 
 export const useStore = create<State>((set) => ({
@@ -14,7 +22,13 @@ export const useStore = create<State>((set) => ({
   telemetry: null,
   health: null,
   cmdLog: [],
+  view: "author",
+  armed: false,
+  compiledShow: null,
   pushCmd: (r) => set((s) => ({ cmdLog: [r, ...s.cmdLog].slice(0, 60) })),
+  setView: (view) => set({ view }),
+  setArmed: (armed) => set({ armed }),
+  setCompiledShow: (compiledShow) => set({ compiledShow }),
 }));
 
 // Single WebSocket: telemetry (10 Hz) · health (1 Hz) · cmd_result echoes. Auto-reconnect.
