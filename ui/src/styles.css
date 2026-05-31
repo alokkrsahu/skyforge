@@ -16,9 +16,14 @@ main { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
 aside { overflow-y: auto; border-left: 1px solid #1e293b; background: #0e1320; padding: 10px; }
 
 .rail { display: flex; flex-direction: column; gap: 4px; padding: 10px 6px; background: #0e1320; border-right: 1px solid #1e293b; }
-.rail button { text-align: left; background: #141c2c; border: 1px solid #1e293b; }
+.rail button { display: flex; align-items: center; gap: 8px; text-align: left; background: #141c2c; border: 1px solid #1e293b; }
 .rail button.active { background: #1d2b4a; border-color: #3a4a70; color: #cfe0ff; }
 .rail button.locked { opacity: .5; }
+.rail .rail-n { width: 18px; height: 18px; flex: 0 0 auto; border-radius: 50%; background: #1e293b; color: #aab4c6;
+                display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+.rail button.done .rail-n { background: #1f7a4a; color: #eafff3; }
+.rail button.active .rail-n { background: #1d4ed8; color: #fff; }
+.rail .rail-l { flex: 1; } .rail .rail-lock { font-size: 11px; }
 
 .panel { padding: 16px; max-width: 760px; } .panel h2 { color: #5aa0ff; margin-top: 0; }
 .stdout { background: #070a10; border: 1px solid #1e293b; border-radius: 5px; padding: 8px; white-space: pre-wrap;
@@ -43,7 +48,12 @@ table.grid th:first-child, table.grid td:first-child { text-align: left; }
 table.grid tr.stale td { color: #ff6a6a; }
 .muted { color: #667; }
 
-.strip { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.strip { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.strip .pill { display: inline-flex; align-items: center; gap: 6px; background: #0e1422; border: 1px solid #1e293b;
+               border-radius: 14px; padding: 3px 10px; font-size: 12px; }
+.strip .pill .pill-k { color: #7f8aa0; } .strip .pill b { color: #cfe0ff; }
+.strip .sep { width: 1px; height: 18px; background: #1e293b; }
+.dot.warn { background: #ffcf5a; } .dot.idle { background: #3a4458; }
 .strip b.airborne { color: #3de08a; } .strip b.grounded { color: #8a94a6; }
 .strip .warn { color: #ffcf5a; } .strip .estop-flag { color: #ff5a5a; font-weight: 700; }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }

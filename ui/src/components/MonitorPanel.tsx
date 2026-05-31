@@ -6,6 +6,7 @@ import { useStore } from "../store";
 export default function MonitorPanel() {
   const h = useStore((s) => s.health);
   const t = useStore((s) => s.telemetry);
+  const bridge = useStore((s) => s.bridgeConnected);
   const pct = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
   return (
     <div className="panel monitor">
@@ -37,7 +38,7 @@ export default function MonitorPanel() {
           })}
         </tbody>
       </table>
-      {!t && <p className="muted">no live session — bring up the fleet (commander+web).</p>}
+      {!bridge && <p className="muted">No live session — launch the stack in Mission Control.</p>}
     </div>
   );
 }

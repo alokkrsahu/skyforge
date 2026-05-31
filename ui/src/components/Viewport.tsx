@@ -29,6 +29,7 @@ function Drone({ d, led }: { d: DroneState; led: [number, number, number] }) {
 
 export default function Viewport() {
   const telemetry = useStore((s) => s.telemetry);
+  const commanderPort = useStore((s) => s.commanderPort);
   const led = telemetry?.led ?? [0, 0.8, 0];
   return (
     <div className="viewport">
@@ -42,7 +43,11 @@ export default function Viewport() {
         {telemetry?.drones.map((d) => <Drone key={d.id} d={d} led={led} />)}
         <OrbitControls makeDefault />
       </Canvas>
-      {!telemetry && <div className="viewport-overlay">waiting for telemetry…</div>}
+      {!telemetry && (
+        <div className="viewport-overlay">
+          {commanderPort == null ? "Bring up the system in Mission Control" : "Waiting for telemetry…"}
+        </div>
+      )}
     </div>
   );
 }
