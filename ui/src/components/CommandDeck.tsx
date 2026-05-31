@@ -7,6 +7,12 @@ const COLORS = ["red", "green", "blue", "white", "off", "orange", "purple", "cya
 export default function CommandDeck() {
   const airborne = useStore((s) => s.telemetry?.airborne ?? false);
   const live = useStore((s) => s.bridgeConnected);          // a commander bridge is connected
+  const takeoffAt = useStore((s) => s.takeoffAt);
+  const noteTakeoff = useStore((s) => s.noteTakeoff);
+  const ready = useStore((s) => s.telemetry?.ready);
+  // Takeoff stalled? (issued, not airborne after ~22 s) — usually a mavsdk_server crash under
+  // SITL load; re-evaluated on each 10 Hz telemetry frame. Beats a silently-stuck GROUNDED.
+  const stalled = takeoffAt !== null && !airborne && Date.now() - takeoffAt > 22000;
   // Live catalog from the backend (compiler.formations.list_formations) — not hardcoded.
   const [patterns, setPatterns] = useState<string[]>([]);
   useEffect(() => {
@@ -27,6 +33,13 @@ export default function CommandDeck() {
   return (
     <div className="deck">
       {!live && <div className="banner warn">No live commander — launch the stack in Mission Control to fly.</div>}
+      {stalled && (
+        <div className="banner danger">
+          Takeoff stalled — {ready?.[0] ?? 0}/{ready?.[1] ?? "?"} drones ready after 22 s. A mavsdk_server
+          likely crashed under SITL load (too many drones for this machine). Check the Mission Control
+          console, then E‑STOP and relaunch with fewer drones.
+        </div>
+      )}
       <div className="row">
         <button disabled={!live} onClick={async () => { cmd ? await releaseCommand() : await acquireCommand(); setCmd(hasCommand()); }}>
           {cmd ? "Release command" : "Take command"}
@@ -35,7 +48,7 @@ export default function CommandDeck() {
       </div>
       <h3>Flight</h3>
       <div className="row">
-        <button disabled={!live} onClick={() => postCmd("takeoff", { altitude_m: alt })}>Takeoff</button>
+        <button disabled={!live} onClick={() => { noteTakeoff(); postCmd("takeoff", { altitude_m: alt }); }}>Takeoff</button>
         <input type="number" value={alt} min={1} step={1} onChange={(e) => setAlt(+e.target.value)} /> m
         <button disabled={!live} onClick={() => postCmd("hover")}>Hover / Hold</button>
       </div>

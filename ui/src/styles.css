@@ -71,6 +71,7 @@ aside { overflow-y: auto; border-left: 1px solid var(--border); background: var(
 .helper { color: var(--text-muted); font-size: 12.5px; margin: var(--sp-1) 0; }
 .banner { padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); margin: var(--sp-2) 0; font-size: 13px; }
 .banner.warn { background: var(--warn-bg); border: 1px solid var(--warn-bd); color: var(--warn); }
+.banner.danger { background: var(--danger-bg); border: 1px solid var(--danger-bd); color: var(--danger); }
 code { font-family: var(--mono); background: var(--surface-3); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
 small { color: var(--text-muted); }
 .stdout { background: #060910; border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--sp-3);

@@ -27,11 +27,14 @@ interface State {
   health: HealthFrame | null;
   cmdLog: CmdResult[];
 
+  takeoffAt: number | null;              // ms when takeoff was issued (for the stall warning)
+
   // ── view / gates ──
   view: View;
   armed: boolean;                        // preflight GO
   compiledShow: string | null;
 
+  noteTakeoff: () => void;               // record a takeoff was commanded
   pushCmd: (r: CmdResult) => void;
   setView: (v: View) => void;
   setArmed: (a: boolean) => void;
@@ -55,9 +58,11 @@ export const useStore = create<State>((set) => ({
   telemetry: null,
   health: null,
   cmdLog: [],
+  takeoffAt: null,
   view: "mission",
   armed: false,
   compiledShow: null,
+  noteTakeoff: () => set({ takeoffAt: Date.now() }),
   pushCmd: (r) => set((s) => ({ cmdLog: [r, ...s.cmdLog].slice(0, 60) })),
   setView: (view) => set({ view }),
   setArmed: (armed) => set({ armed }),
@@ -148,7 +153,14 @@ export function disconnectBridge(): void {
 }
 
 function handleBridge(f: BridgeFrame): void {
-  if (f.type === "telemetry") useStore.setState({ telemetry: f });
-  else if (f.type === "health") useStore.setState({ health: f });
-  else if (f.type === "cmd_result") useStore.getState().pushCmd(f as CmdResult);
+  if (f.type === "telemetry") {
+    useStore.setState({ telemetry: f });
+    if (f.airborne && useStore.getState().takeoffAt !== null) useStore.setState({ takeoffAt: null });
+  } else if (f.type === "health") {
+    useStore.setState({ health: f });
+  } else if (f.type === "cmd_result") {
+    const r = f as CmdResult;
+    if (["land", "abort", "rtl"].includes(r.verb)) useStore.setState({ takeoffAt: null });  // gave up / landing
+    useStore.getState().pushCmd(r);
+  }
 }
