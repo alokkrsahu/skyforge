@@ -78,6 +78,11 @@ fleet-level link-loss handling, no bandwidth budgeting, and **MAVLink/gRPC are u
 **id ↔ takeoff-slot ↔ trajectory** manifest tooling, no **per-drone trajectory upload** mechanism
 (the `SKYFORGE_FLEET` file is addressing for the *live* model, not bulk upload), no spare/hot-swap
 workflow, and no fleet **pre-flight go/no-go** health gate.
+> **Status:** ◑ manifest tooling landed — `DroneConn` now carries `sys_id`/`home_ned`/`slot`/
+> `trajectory_file`, parsed by `load_profile`; `build_fleet_manifest()` generates the
+> id↔`MAV_SYS_ID`(=id+1)↔slot↔trajectory mapping (`runtime/show/connection.py`,
+> `tests/unit/test_connection.py`). Remaining: batch firmware/param **flashing** and the upload step
+> itself need real boards (**DEFERRED**); per-drone failsafe param push already exists (item 4).
 
 ### 7. Monitoring & observability at scale — 🟡
 No **fleet dashboard** (aggregate battery / GPS fix / position-error / armed state), no **black-box

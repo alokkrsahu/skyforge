@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../runtime"))
 
 from show import config
 from show.connection import (
-    load_profile, sitl_default_conn, SKYFORGE_FLEET_ENV, GCS_ENV,
+    load_profile, sitl_default_conn, SKYFORGE_FLEET_ENV, GCS_ENV, build_fleet_manifest,
     reconcile_commander_fleet_size, validate_show_fleet_size,
 )
 
@@ -319,3 +319,51 @@ def test_gcs_unknown_mode_warns_and_keeps_beacon():
         assert any("GCS mode" in w for w in prof.warnings)
     finally:
         _restore_gcs(g)
+
+
+# ── Provisioning manifest (id ↔ sys_id ↔ slot ↔ trajectory) ───────────────────
+
+def test_manifest_fields_parsed_per_drone():
+    path = _fleet_file({"drones": [
+        {"mavlink_url": "udp://a:1", "sys_id": 11, "home_ned": [2.0, 4.0, 6.0],
+         "slot": 7, "trajectory_file": "show.drone000.skyforge.json"}]})
+    try:
+        c = load_profile(1, path).conn(0)
+        assert c.sys_id == 11 and c.slot == 7
+        assert c.home_ned == (2.0, 4.0, 6.0)
+        assert c.trajectory_file == "show.drone000.skyforge.json"
+    finally:
+        os.unlink(path)
+
+
+def test_default_conn_has_no_manifest_fields():
+    c = sitl_default_conn(0)
+    assert c.sys_id is None and c.home_ned is None and c.slot is None and c.trajectory_file is None
+
+
+def test_build_fleet_manifest_assigns_sysid_slot_traj():
+    m = build_fleet_manifest(
+        3,
+        mavlink_urls=[f"udp://10.0.0.{i}:14550" for i in range(3)],
+        home_ned_list=[(0.0, 2.0 * i) for i in range(3)],
+        trajectory_files=[f"show.drone{i:03d}.skyforge.json" for i in range(3)],
+    )
+    assert [d["sys_id"] for d in m["drones"]] == [1, 2, 3]   # PX4 MAV_SYS_ID = id+1
+    assert [d["slot"] for d in m["drones"]] == [0, 1, 2]
+    assert m["drones"][2]["trajectory_file"] == "show.drone002.skyforge.json"
+    assert m["use_gcs_beacon"] is False and m["spawn_local_server"] is False
+
+
+def test_build_fleet_manifest_round_trips_through_load_profile():
+    g = _set_gcs(None)
+    m = build_fleet_manifest(2, mavlink_urls=["udp://a:1", "udp://b:2"],
+                             home_ned_list=[(0.0, 0.0), (0.0, 3.0)])
+    path = _fleet_file(m)
+    try:
+        prof = load_profile(2, path)
+        assert prof.n == 2
+        assert prof.conn(1).sys_id == 2 and prof.conn(1).home_ned == (0.0, 3.0)
+        assert prof.use_gcs_beacon is False
+    finally:
+        _restore_gcs(g)
+        os.unlink(path)

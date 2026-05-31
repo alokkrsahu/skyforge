@@ -43,11 +43,19 @@ _GCS_MODES = ("beacon", "qgc", "none")
 
 @dataclass(frozen=True)
 class DroneConn:
-    """How to reach one drone: the mavsdk_server's MAVLink endpoint + its gRPC channel."""
+    """How to reach one drone: the mavsdk_server's MAVLink endpoint + its gRPC channel.
+
+    The last four fields are the optional PROVISIONING manifest (for bulk/real fleets):
+    which physical airframe this id maps to and which trajectory it flies. All default to
+    None → SITL is unaffected."""
     drone_id:    int
     mavlink_url: str
     grpc_host:   str
     grpc_port:   int
+    sys_id:          Optional[int]   = None   # MAVLink MAV_SYS_ID (PX4 convention: drone_id+1)
+    home_ned:        Optional[tuple] = None   # (N, E[, U]) launch slot, m from venue origin
+    slot:            Optional[int]   = None   # physical launch-grid slot index
+    trajectory_file: Optional[str]   = None   # per-drone slice to upload (see `skyforge export`)
 
 
 _LOCAL_HOSTS = ("localhost", "127.0.0.1")
@@ -149,6 +157,10 @@ def load_profile(n: int, fleet_path: Optional[str] = None) -> FleetProfile:
                 mavlink_url=str(d["mavlink_url"]),
                 grpc_host=str(d.get("grpc_host", grpc_host_default)),
                 grpc_port=int(d.get("grpc_port", grpc_base + i)),
+                sys_id=int(d["sys_id"]) if "sys_id" in d else None,
+                home_ned=tuple(d["home_ned"]) if "home_ned" in d else None,
+                slot=int(d["slot"]) if "slot" in d else None,
+                trajectory_file=str(d["trajectory_file"]) if "trajectory_file" in d else None,
             ))
         conns = tuple(parsed)
 
@@ -175,6 +187,39 @@ def load_profile(n: int, fleet_path: Optional[str] = None) -> FleetProfile:
         gcs_beacon_grpc=config.GCS_BEACON_GRPC,
         warnings=tuple(warnings),
     )
+
+
+def build_fleet_manifest(
+    n:                int,
+    mavlink_urls:     Optional[list[str]]   = None,
+    home_ned_list:    Optional[list[tuple]] = None,
+    trajectory_files: Optional[list[str]]   = None,
+    *,
+    use_gcs_beacon:     bool = False,
+    spawn_local_server: bool = False,
+) -> dict:
+    """Build a fleet/provisioning manifest (a SKYFORGE_FLEET dict) for a real fleet:
+    a stable id ↔ MAV_SYS_ID ↔ launch slot ↔ trajectory mapping. ``sys_id`` is the PX4
+    convention ``drone_id + 1`` and ``slot`` is the id; pass per-drone endpoints/homes/
+    slices as available. ``json.dump`` the result and point ``$SKYFORGE_FLEET`` at it.
+    Defaults are hardware-leaning (beacon off; pre-started servers)."""
+    drones = []
+    for i in range(n):
+        entry: dict = {
+            "sys_id": i + 1,
+            "slot":   i,
+            "mavlink_url": (mavlink_urls[i] if mavlink_urls else f"udp://drone-{i:03d}:14550"),
+        }
+        if home_ned_list and i < len(home_ned_list):
+            entry["home_ned"] = list(home_ned_list[i])
+        if trajectory_files and i < len(trajectory_files):
+            entry["trajectory_file"] = trajectory_files[i]
+        drones.append(entry)
+    return {
+        "spawn_local_server": spawn_local_server,
+        "use_gcs_beacon":     use_gcs_beacon,
+        "drones":             drones,
+    }
 
 
 # ── Fleet-size reconciliation (pure; the run scripts print the message) ──────────
