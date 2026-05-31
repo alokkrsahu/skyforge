@@ -198,9 +198,17 @@ async def main(n: int) -> None:
     if os.environ.get("SKYFORGE_WEB", "").strip():
         import sys as _sys, os as _os
         _sys.path.insert(0, _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..")))
-        from backend.serve_web import serve_web
-        health_q = asyncio.Queue(maxsize=4)
-        labelled = [("web", serve_web(commander, runtime, abort_event, health_q))]
+        try:
+            from backend.serve_web import serve_web
+        except ImportError as exc:
+            # The web bridge needs the optional [ui] extra (fastapi/uvicorn). If it's not
+            # installed, don't take the whole flight session down — fall back to the REPL.
+            print(f"[run_commander] SKYFORGE_WEB set but the web stack is unavailable ({exc}); "
+                  f"install with: pip install -e '.[ui]'. Falling back to the stdin REPL.")
+            labelled = [("cli", cli_loop(commander))]
+        else:
+            health_q = asyncio.Queue(maxsize=4)
+            labelled = [("web", serve_web(commander, runtime, abort_event, health_q))]
     else:
         labelled = [("cli", cli_loop(commander))]
     for orig_i, drone in active:
