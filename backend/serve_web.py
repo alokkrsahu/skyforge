@@ -10,7 +10,16 @@ cross-thread marshalling.
 """
 from __future__ import annotations
 
+import asyncio
+
 from .control import build_app
+
+
+async def _shutdown_on_abort(server, abort_event) -> None:
+    """Stop uvicorn when the session is aborted/killed, so serve_web returns and the
+    run_commander gather completes (otherwise the process would hang after a Kill)."""
+    await abort_event.wait()
+    server.should_exit = True
 
 
 async def serve_web(commander, runtime, abort_event, health_q=None,
@@ -23,5 +32,6 @@ async def serve_web(commander, runtime, abort_event, health_q=None,
     config = uvicorn.Config(app, host=host, port=port, log_level="warning",
                             loop="none", lifespan="off")
     server = uvicorn.Server(config)
+    asyncio.create_task(_shutdown_on_abort(server, abort_event))
     print(f"[web] SkyForge operator UI bridge on http://{host}:{port}")
     await server.serve()                      # runs on the caller's loop (run_commander's)

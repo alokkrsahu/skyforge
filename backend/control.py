@@ -87,8 +87,12 @@ def register_control(app: FastAPI) -> None:
 
     @app.post("/api/session/kill")
     async def kill():
-        app.state.abort_event.set()     # hard session teardown (also player/agents E-STOP)
-        return {"ok": True, "status": "session abort_event set", "verb": "kill"}
+        # Immediate-drop E-STOP (matches the CLI's Ctrl-C → abort()) AND tear the session
+        # down: abort() sets abort_flag+airborne=False (land now); abort_event makes
+        # serve_web stop uvicorn so the gather completes and the process exits.
+        await app.state.commander.abort()
+        app.state.abort_event.set()
+        return {"ok": True, "status": "ABORT — landing + tearing down session", "verb": "kill"}
 
     @app.get("/api/status")
     async def status():                 return {"text": await cmd().status()}
