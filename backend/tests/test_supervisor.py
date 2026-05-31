@@ -134,7 +134,7 @@ def test_sitl_failure_state(monkeypatch):
         await s.spawn("sitl", n=4)
         await asyncio.sleep(0.05)
         assert s.status()["sitl"]["state"] == "failed"
-        assert not s._ready_events["sitl"].is_set()
+        assert await s._await_ready("sitl", timeout=0.1) is False    # failure → not ready
         await s.teardown()
     asyncio.run(body())
 
@@ -187,6 +187,48 @@ def test_respawn_stops_old_proc(monkeypatch):
         assert first.returncode is not None        # old proc was stopped, not orphaned
         assert s.procs["sitl"] is not first        # tracking the new one
         await s.teardown()
+    asyncio.run(body())
+
+
+def test_orchestrated_launch_sequence(monkeypatch):
+    hub = _Hub(); q = hub.sink()
+    # 1st spawn (sitl) emits 4 readiness lines; 2nd (commander) emits the bridge marker.
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", _fake_exec_returning([
+        ["Startup script returned successfully"] * 4,
+        ["[web] SkyForge operator UI bridge on http://127.0.0.1:8799"],
+    ]))
+
+    async def body():
+        s = Supervisor(root="/repo", app=hub)
+        async def fake_bridge(port, timeout=90.0): return True      # don't really HTTP-probe
+        s._await_bridge = fake_bridge
+        await s.orchestrate(n=4)
+        frames = _drain(q)                                          # drain once, then filter
+        assert [f["phase"] for f in frames if f["type"] == "lifecycle"] == \
+            ["sitl_starting", "sitl_ready", "commander_starting", "bridge_up"]
+        bringups = [f for f in frames if f["type"] == "bringup"]
+        assert bringups and bringups[-1]["port"] == 8799
+        assert not s._orchestrating                                 # cleared in finally
+        await s.teardown()
+    asyncio.run(body())
+
+
+def test_orchestrated_launch_times_out_on_sitl(monkeypatch):
+    hub = _Hub(); q = hub.sink()
+    monkeypatch.setattr(sup.asyncio, "create_subprocess_exec", _fake_exec_returning([[]]))  # sitl never readies
+
+    async def body():
+        s = Supervisor(root="/repo", app=hub)
+        await s.orchestrate(n=2)                                    # _await_ready times out fast below
+        phases = [f["phase"] for f in _drain(q, "lifecycle")]
+        assert phases[0] == "sitl_starting" and phases[-1] == "timeout"
+        assert "commander_starting" not in phases                  # never advanced past SITL
+        await s.teardown()
+    # shrink the SITL readiness timeout so the test is fast
+    import backend.supervisor as _sup
+    real = _sup.Supervisor._await_ready
+    async def quick(self, target, timeout=240.0): return await real(self, target, timeout=0.1)
+    monkeypatch.setattr(_sup.Supervisor, "_await_ready", quick)
     asyncio.run(body())
 
 

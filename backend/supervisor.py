@@ -92,6 +92,11 @@ def _default_state() -> dict:
 # (a latent 422 that broke /api/bringup over HTTP).
 class BringupReq(BaseModel):
     target: str; n: int = 4; arena: str = "default"; show: str | None = None; opts: dict = {}
+    mode: str = "background"            # "background" | "terminal" (open in a real Terminal window)
+
+
+class LaunchReq(BaseModel):
+    n: int = 4; arena: str = "default"; opts: dict = {}; mode: str = "background"
 
 
 class Supervisor:
@@ -104,6 +109,10 @@ class Supervisor:
         self.state: dict[str, dict] = {}                             # per-target state machine
         self._ready_events: dict[str, asyncio.Event] = {}            # set when a target hits "ready"
         self._spawn_n: dict[str, int] = {}                           # expected N (SITL readiness)
+        self._orchestrating = False                                  # one-click launch in flight?
+        self._launch_task: asyncio.Task | None = None
+        self._last_lifecycle: dict | None = None                     # replayed to new /ws clients
+        self._last_bringup: dict | None = None
 
     # ── broadcast helpers ──────────────────────────────────────────────────────
     def _broadcast(self, frame: dict) -> None:
@@ -131,6 +140,7 @@ class Supervisor:
                     self._ready_events.setdefault("sitl", asyncio.Event()).set()
             elif "returned with return value:" in line or "FAILED after" in line:
                 self._set_state("sitl", "failed")
+                self._ready_events.setdefault("sitl", asyncio.Event()).set()   # wake _await_ready
         elif target == "commander":
             if "bridge on http://" in line:
                 self._set_state("commander", "ready")
@@ -189,7 +199,8 @@ class Supervisor:
             self._broadcast({"type": "proc", "procs": self.status()})
 
     async def spawn(self, target: str, *, n: int = 4, arena: str = "default",
-                    show: str | None = None, opts: dict | None = None) -> int:
+                    show: str | None = None, opts: dict | None = None,
+                    mode: str = "background") -> int:
         await self._stop_target(target)                   # don't orphan a running instance
         argv = launch_argv(self.root, target, n=n, arena=arena, show=show)
         env  = {**os.environ, **compose_env(opts or {})}
@@ -219,11 +230,77 @@ class Supervisor:
         return out
 
     def backlog(self) -> list[dict]:
-        """Frames replayed to a newly-connected /ws client: current process status + recent logs."""
+        """Frames replayed to a newly-connected /ws client: current process status, recent logs,
+        and the latest lifecycle/bringup so a window opened mid-launch catches up."""
         frames: list[dict] = [{"type": "proc", "procs": self.status()}]
         for ring in self.rings.values():
             frames.extend(ring)
+        if self._last_lifecycle is not None:
+            frames.append(self._last_lifecycle)
+        if self._last_bringup is not None:
+            frames.append(self._last_bringup)
         return frames
+
+    # ── one-click orchestration: SITL → await ready → commander+web → await bridge ──
+    def _lifecycle(self, phase: str, msg: str = "") -> None:
+        frame = {"type": "lifecycle", "phase": phase, "msg": msg, "t": time.monotonic()}
+        self._last_lifecycle = frame
+        self._broadcast(frame)
+
+    async def _await_ready(self, target: str, timeout: float = 240.0) -> bool:
+        """Block until `target` signals ready (or fails/ times out)."""
+        ev = self._ready_events.setdefault(target, asyncio.Event())
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return False
+        return self.state.get(target, {}).get("state") != "failed"
+
+    async def _await_bridge(self, port: int, timeout: float = 90.0) -> bool:
+        """Poll the spawned commander bridge until it answers — the authoritative up-signal
+        (the '[web] bridge on http://' log line prints just before the socket binds)."""
+        import httpx
+        end = time.monotonic() + timeout
+        async with httpx.AsyncClient() as client:
+            while time.monotonic() < end:
+                try:
+                    r = await client.get(f"http://127.0.0.1:{port}/api/status", timeout=2.0)
+                    if r.status_code == 200:
+                        return True
+                except Exception:
+                    pass
+                await asyncio.sleep(0.5)
+        return False
+
+    async def orchestrate(self, n: int = 4, arena: str = "default",
+                          opts: dict | None = None, mode: str = "background") -> None:
+        """The one-click 'Launch stack': bring SITL up to N/N, then the commander+web bridge,
+        emitting lifecycle frames the UI tracks; the final `bringup` frame carries the bridge
+        port so the UI attaches its live socket. Runs as a background task; never raises to a
+        request."""
+        opts = opts or {}
+        try:
+            self._lifecycle("sitl_starting", f"spawning SITL ×{n} ({arena})")
+            await self.spawn("sitl", n=n, arena=arena, opts=opts, mode=mode)
+            if not await self._await_ready("sitl", timeout=240.0):
+                failed = self.state.get("sitl", {}).get("state") == "failed"
+                return self._lifecycle("failed" if failed else "timeout",
+                                       "SITL did not reach N/N ready")
+            self._lifecycle("sitl_ready", f"{n}/{n} SITL ready")
+
+            web_port = int(compose_env({**opts, "web": True}).get("SKYFORGE_WEB_PORT", 8799))
+            self._lifecycle("commander_starting", f"spawning commander+web on :{web_port}")
+            await self.spawn("commander", n=n, opts={**opts, "web": True}, mode=mode)
+            if not await self._await_bridge(web_port, timeout=90.0):
+                return self._lifecycle("failed", "commander bridge never came up")
+
+            proc = self.procs.get("commander")
+            self._last_bringup = {"type": "bringup", "target": "commander", "port": web_port,
+                                  "pid": proc.pid if proc is not None else None}
+            self._broadcast(self._last_bringup)
+            self._lifecycle("bridge_up", f"bridge on :{web_port}")
+        finally:
+            self._orchestrating = False
 
     async def teardown(self) -> list[str]:
         """SIGTERM tracked procs in safe order, cancel their readers, then clean up orphan
@@ -256,11 +333,21 @@ def register_supervisor(app) -> None:
     sup = Supervisor(app=app)
     app.state.supervisor = sup
 
+    @app.post("/api/launch")
+    async def launch(b: LaunchReq):
+        """One-click: sequence SITL → commander+web in the background; progress streams over /ws
+        (lifecycle frames + a `bringup` frame carrying the commander port)."""
+        if sup._orchestrating:
+            return {"ok": False, "error": "a launch is already in progress"}
+        sup._orchestrating = True
+        sup._launch_task = asyncio.create_task(sup.orchestrate(b.n, b.arena, b.opts, b.mode))
+        return {"ok": True, "started": True}
+
     @app.post("/api/bringup")
     async def bringup(b: BringupReq):
         if b.target not in LAUNCHERS:
             return {"ok": False, "error": f"unknown target {b.target!r}"}
-        pid = await sup.spawn(b.target, n=b.n, arena=b.arena, show=b.show, opts=b.opts)
+        pid = await sup.spawn(b.target, n=b.n, arena=b.arena, show=b.show, opts=b.opts, mode=b.mode)
         res = {"ok": True, "target": b.target, "pid": pid}
         if b.target == "commander":   # tell the UI where the live bridge is listening
             res["port"] = int(compose_env({**b.opts, "web": True}).get("SKYFORGE_WEB_PORT", 8799))
