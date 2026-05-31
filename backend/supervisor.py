@@ -40,8 +40,9 @@ def compose_env(opts: dict) -> dict:
          "t0_epoch": "SKYFORGE_T0_EPOCH", "gz_world": "SKYFORGE_GZ_WORLD",
          "fail_mode": "SKYFORGE_FAIL_MODE"}
     for k, var in m.items():
-        if opts.get(k):
-            env[var] = str(opts[k])
+        v = opts.get(k)
+        if v is not None and v != "":          # forward a legitimate 0 (e.g. t0_epoch=0); skip None/""
+            env[var] = str(v)
     if opts.get("autoabort"):
         env["SKYFORGE_AUTOABORT"] = "1"
     if opts.get("web"):

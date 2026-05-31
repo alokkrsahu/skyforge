@@ -20,6 +20,8 @@ def test_compose_env():
     assert e["SKYFORGE_AUTOABORT"] == "1" and e["SKYFORGE_WEB"] == "1"
     assert e["SKYFORGE_WEB_PORT"] == "8799" and e["SKYFORGE_BLACKBOX"] == "/tmp/f.jsonl"
     assert compose_env({}) == {}                                  # only set what's given
+    assert compose_env({"t0_epoch": 0})["SKYFORGE_T0_EPOCH"] == "0"  # legitimate 0 forwarded
+    assert "SKYFORGE_GCS" not in compose_env({"gcs": ""})           # empty string skipped
 
 
 def test_parse_sitl_ready():
