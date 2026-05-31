@@ -92,6 +92,11 @@ workflow, and no fleet **pre-flight go/no-go** health gate.
 No **fleet dashboard** (aggregate battery / GPS fix / position-error / armed state), no **black-box
 logging** for post-flight/compliance, no **anomaly detection → auto-abort** triggers. QGC monitors a
 handful, not thousands.
+> **Status:** ◑ `runtime/show/fleet_monitor.py` — `summarize()` aggregates per-drone health
+> (seen/lost, worst battery, worst tracking error), `should_auto_abort()` decides on a policy breach,
+> `BlackBox` is a JSONL flight recorder; wired into the commander's monitor loop (opt-in
+> `$SKYFORGE_BLACKBOX`, `$SKYFORGE_AUTOABORT`) (`tests/unit/test_fleet_monitor.py`). DEFERRED: battery/
+> GPS telemetry subscription + a real ground dashboard UI.
 
 ### 8. Mid-show resilience — 🟡
 **No dynamic failure handling** — if a drone drops out, neighbours don't adapt and the figure isn't

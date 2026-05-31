@@ -200,7 +200,18 @@ async def main(n: int) -> None:
         labelled.append((f"telemetry {orig_i}",
                          telemetry_consumer(drone, orig_i, runtime, hn, he, abort_event)))
     labelled.append(("led_watcher", led_watcher(runtime, abort_event)))
-    labelled.append(("health_monitor", monitor_fleet_health(runtime, abort_event)))
+    # Opt-in observability: $SKYFORGE_BLACKBOX → JSONL flight recorder;
+    # $SKYFORGE_AUTOABORT=1 → automatic fleet abort on a policy breach (battery/loss/error).
+    _bb = None
+    if os.environ.get("SKYFORGE_BLACKBOX", "").strip():
+        from show.fleet_monitor import BlackBox
+        _bb = BlackBox(os.environ["SKYFORGE_BLACKBOX"].strip())
+    _policy = None
+    if os.environ.get("SKYFORGE_AUTOABORT", "").strip() in ("1", "true", "yes"):
+        from show.fleet_monitor import AbortPolicy
+        _policy = AbortPolicy()
+    labelled.append(("health_monitor",
+                     monitor_fleet_health(runtime, abort_event, black_box=_bb, abort_policy=_policy)))
 
     results = await asyncio.gather(*(c for _, c in labelled), return_exceptions=True)
 

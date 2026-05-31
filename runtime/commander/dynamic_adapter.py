@@ -116,13 +116,41 @@ def apply_health_policy(
 async def monitor_fleet_health(
     runtime: "DynamicRuntime", abort_event: asyncio.Event,
     interval: float = 1.0, timeout: float = DROPOUT_TIMEOUT_S,
+    black_box=None, abort_policy=None,
 ) -> None:
-    """Background task: once per `interval`, apply the dropout health policy and log."""
+    """Background task: once per `interval`, apply the dropout health policy and log.
+
+    If `black_box`/`abort_policy` are supplied (run_commander wires them from env), also
+    record a per-tick fleet summary and trigger an automatic abort on a policy breach."""
+    from show.fleet_monitor import DroneHealth, summarize, should_auto_abort
     while not abort_event.is_set():
-        lost = apply_health_policy(runtime, time.monotonic(), timeout)
+        now  = time.monotonic()
+        lost = apply_health_policy(runtime, now, timeout)
         if lost:
             action = "ABORTING" if runtime.fail_mode == "abort" else "continuing without them"
             print(f"[monitor] Lost drones {lost} (no telemetry > {timeout:.0f}s) — {action}")
+
+        if black_box is not None or abort_policy is not None:
+            healths = []
+            for i in range(runtime.n_drones):
+                pos = runtime.current_positions.get(i)
+                age = now - runtime.position_timestamps.get(i, now - 1e9)
+                err = None
+                if pos is not None:
+                    tN, tE, tD = runtime.target_ned(i, now)
+                    err = ((pos[0] - tN) ** 2 + (pos[1] - tE) ** 2 + (pos[2] - tD) ** 2) ** 0.5
+                healths.append(DroneHealth(drone_id=i, armed=runtime.airborne, age_s=age, pos_error_m=err))
+            summary = summarize(healths, runtime.n_drones, stale_age_s=timeout)
+            if black_box is not None:
+                black_box.record({"t": now, "n_seen": summary.n_seen, "n_lost": summary.n_lost,
+                                  "max_pos_error_m": summary.max_pos_error_m,
+                                  "min_battery_frac": summary.min_battery_frac})
+            if abort_policy is not None and runtime.airborne:
+                fire, why = should_auto_abort(summary, abort_policy)
+                if fire:
+                    print(f"[monitor] AUTO-ABORT — {why}")
+                    runtime.abort_flag = True
+                    runtime.airborne   = False
         await asyncio.sleep(interval)
 
 
