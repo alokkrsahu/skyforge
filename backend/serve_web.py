@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 
-from .control import build_app
+from .control import build_app, broadcast
 
 
 async def _shutdown_on_abort(server, abort_event) -> None:
@@ -20,6 +20,13 @@ async def _shutdown_on_abort(server, abort_event) -> None:
     run_commander gather completes (otherwise the process would hang after a Kill)."""
     await abort_event.wait()
     server.should_exit = True
+
+
+async def _pump_health(app, health_q) -> None:
+    """Drain the 1 Hz FleetSummary queue (filled by monitor_fleet_health) and fan each
+    frame out to every connected /ws client."""
+    while True:
+        broadcast(app, await health_q.get())
 
 
 async def serve_web(commander, runtime, abort_event, health_q=None,
@@ -33,5 +40,7 @@ async def serve_web(commander, runtime, abort_event, health_q=None,
                             loop="none", lifespan="off")
     server = uvicorn.Server(config)
     asyncio.create_task(_shutdown_on_abort(server, abort_event))
+    if health_q is not None:
+        asyncio.create_task(_pump_health(app, health_q))
     print(f"[web] SkyForge operator UI bridge on http://{host}:{port}")
     await server.serve()                      # runs on the caller's loop (run_commander's)

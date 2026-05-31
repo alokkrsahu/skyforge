@@ -38,18 +38,30 @@ def test_ws_streams_telemetry_frames():
             assert "t" in f and "transition" in f
 
 
+def _recv_until(ws, typ, tries=8):
+    for _ in range(tries):
+        f = ws.receive_json()
+        if f["type"] == typ:
+            return f
+    raise AssertionError(f"no {typ} frame received")
+
+
 def test_ws_echoes_cmd_result():
     rt = DynamicRuntime(2, [(0, 0), (0, 2)]); rt.airborne = True; rt.ready_target = 2
     c = TestClient(build_app(FleetCommander(rt), rt, asyncio.Event(), None))
-    c.post("/api/cmd/formation", json={"spec": "circle"})        # enqueues a cmd_result
-    with c.websocket_connect("/ws") as ws:
-        for _ in range(5):                                        # telemetry then the echo
-            f = ws.receive_json()
-            if f["type"] == "cmd_result":
-                assert f["verb"] == "formation" and f["ok"] is True
-                break
-        else:
-            raise AssertionError("no cmd_result frame received")
+    with c.websocket_connect("/ws") as ws:                       # connect first (realistic)
+        c.post("/api/cmd/formation", json={"spec": "circle"})    # broadcast to subscribers
+        f = _recv_until(ws, "cmd_result")
+        assert f["verb"] == "formation" and f["ok"] is True
+
+
+def test_cmd_result_fans_out_to_all_clients():
+    rt = DynamicRuntime(2, [(0, 0), (0, 2)]); rt.airborne = True; rt.ready_target = 2
+    c = TestClient(build_app(FleetCommander(rt), rt, asyncio.Event(), None))
+    with c.websocket_connect("/ws") as ws1, c.websocket_connect("/ws") as ws2:
+        c.post("/api/cmd/hover")
+        assert _recv_until(ws1, "cmd_result")["verb"] == "hover"   # BOTH clients get it
+        assert _recv_until(ws2, "cmd_result")["verb"] == "hover"
 
 
 def test_peek_target_does_not_clear_transition_but_target_ned_does():

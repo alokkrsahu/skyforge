@@ -23,6 +23,18 @@ from pydantic import BaseModel
 _GUARDS = ("not airborne", "in offboard", "Already airborne", "Unknown colour")
 
 
+def broadcast(app: FastAPI, msg: dict) -> None:
+    """Fan a frame out to every connected /ws subscriber (per-client latest-wins queues),
+    so multiple windows all see cmd_result/health — a single shared queue would deliver
+    each frame to only ONE client."""
+    for q in list(getattr(app.state, "subscribers", ())):
+        try:
+            q.put_nowait(msg)
+        except Exception:
+            try: q.get_nowait(); q.put_nowait(msg)   # drop oldest
+            except Exception: pass
+
+
 def classify(msg: str, verb: str) -> dict:
     """Map a FleetCommander status string to {ok, guard, status, verb} (there is no
     structured error channel — errors start with 'Error', guards are known phrases)."""
@@ -45,15 +57,10 @@ def register_control(app: FastAPI) -> None:
     cmd = lambda: app.state.commander    # injected FleetCommander
 
     def reply(msg: str, verb: str) -> dict:
-        """Classify + echo to the cmd_result stream (command log / multi-window sync)."""
+        """Classify + fan the cmd_result out to EVERY connected client (command log /
+        multi-window sync)."""
         res = classify(msg, verb)
-        q = app.state.cmd_q
-        if q is not None:
-            try:
-                q.put_nowait({"type": "cmd_result", **res})
-            except Exception:
-                try: q.get_nowait(); q.put_nowait({"type": "cmd_result", **res})
-                except Exception: pass
+        broadcast(app, {"type": "cmd_result", **res})
         return res
 
     @app.post("/api/cmd/takeoff")
@@ -131,20 +138,19 @@ def register_ws(app: FastAPI) -> None:
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
-        hq, cq = app.state.health_q, app.state.cmd_q
+        q = asyncio.Queue(maxsize=32)                           # this client's frame mailbox
+        app.state.subscribers.add(q)
         try:
             while True:
                 snap = await app.state.commander.snapshot()
                 await sock.send_json({"type": "telemetry", "t": time.monotonic(), **snap})
-                if cq is not None:                              # cmd_result echoes (command log)
-                    while not cq.empty():
-                        await sock.send_json(cq.get_nowait())
-                if hq is not None:                              # 1 Hz FleetSummary frames
-                    while not hq.empty():
-                        await sock.send_json(hq.get_nowait())
+                while not q.empty():                            # cmd_result + health, fanned in
+                    await sock.send_json(q.get_nowait())
                 await asyncio.sleep(0.1)                         # 10 Hz telemetry cadence
         except WebSocketDisconnect:
             return
+        finally:
+            app.state.subscribers.discard(q)
 
 
 def build_app(commander, runtime, abort_event, health_q=None) -> FastAPI:
@@ -153,8 +159,8 @@ def build_app(commander, runtime, abort_event, health_q=None) -> FastAPI:
     app.state.commander   = commander
     app.state.runtime     = runtime
     app.state.abort_event = abort_event
-    app.state.health_q    = health_q
-    app.state.cmd_q        = asyncio.Queue(maxsize=64)  # cmd_result echo stream
+    app.state.health_q    = health_q                    # 1 Hz FleetSummary (pumped by serve_web)
+    app.state.subscribers = set()                       # per-client frame queues (fan-out)
     app.state.command_token = None                       # single-writer lock (None = open)
     # Loopback CORS so the UI served by the gateway can reach this bridge on its own port.
     app.add_middleware(CORSMiddleware, allow_origin_regex=r"http://(127\.0\.0\.1|localhost)(:\d+)?",
