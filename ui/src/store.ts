@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { bridgeWsUrl } from "./api";
 import type { TelemetryFrame, HealthFrame, CmdResult, Frame } from "./types";
 
 export type View = "author" | "preflight" | "bringup" | "fly" | "monitor" | "review";
@@ -31,17 +32,23 @@ export const useStore = create<State>((set) => ({
   setCompiledShow: (compiledShow) => set({ compiledShow }),
 }));
 
-// Single WebSocket: telemetry (10 Hz) · health (1 Hz) · cmd_result echoes. Auto-reconnect.
+// Single WebSocket to the bridge: telemetry (10 Hz) · health (1 Hz) · cmd_result echoes.
+// Auto-reconnect with capped exponential backoff (no tight 1 Hz storm when the bridge
+// isn't up yet — e.g. before bring-up, or when served by the gateway which has no /ws).
+let sock: WebSocket | null = null;
+
 export function connectWs(): void {
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const url = `${proto}://${location.host}/ws`;
+  if (sock) { try { sock.close(); } catch { /* ignore */ } sock = null; }
+  let delay = 1000;
   const open = () => {
-    const ws = new WebSocket(url);
-    ws.onopen = () => useStore.setState({ connected: true });
+    const ws = new WebSocket(bridgeWsUrl());
+    sock = ws;
+    ws.onopen = () => { delay = 1000; useStore.setState({ connected: true }); };
     ws.onclose = () => {
       useStore.setState({ connected: false });
-      setTimeout(open, 1000);
+      if (sock === ws) { setTimeout(open, delay); delay = Math.min(delay * 2, 8000); }
     };
+    ws.onerror = () => { try { ws.close(); } catch { /* ignore */ } };
     ws.onmessage = (ev) => {
       const f = JSON.parse(ev.data) as Frame;
       if (f.type === "telemetry") useStore.setState({ telemetry: f });

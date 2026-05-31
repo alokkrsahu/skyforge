@@ -119,7 +119,10 @@ def register_supervisor(app) -> None:
         if b.target not in LAUNCHERS:
             return {"ok": False, "error": f"unknown target {b.target!r}"}
         pid = await sup.spawn(b.target, n=b.n, arena=b.arena, show=b.show, opts=b.opts)
-        return {"ok": True, "target": b.target, "pid": pid}
+        res = {"ok": True, "target": b.target, "pid": pid}
+        if b.target == "commander":   # tell the UI where the live bridge is listening
+            res["port"] = int(compose_env({**b.opts, "web": True}).get("SKYFORGE_WEB_PORT", 8799))
+        return res
 
     @app.get("/api/procs")
     async def procs():

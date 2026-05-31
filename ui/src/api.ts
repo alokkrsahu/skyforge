@@ -1,25 +1,38 @@
 import type { CmdResult } from "./types";
 
+// The live control/telemetry bridge may live on a different origin than the page: the
+// gateway (offline plane + supervisor) serves the UI, and when it SPAWNS the commander+web
+// bridge that runs on its own port. After bring-up the UI points control + WS at that base;
+// empty = same-origin (the standalone commander+web case). CORS is enabled on the bridge.
+let bridgeBase = "";
+export function setBridgeBase(b: string): void { bridgeBase = b.replace(/\/$/, ""); }
+export function getBridgeBase(): string { return bridgeBase; }
+export function bridgeWsUrl(): string {
+  if (bridgeBase) return bridgeBase.replace(/^http/, "ws") + "/ws";
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${location.host}/ws`;
+}
+
 // Single-writer command authority: when held, the token is sent with every control call.
 let cmdToken: string | null = null;
 export function hasCommand(): boolean { return cmdToken !== null; }
 export async function acquireCommand(): Promise<void> {
-  cmdToken = (await post("/api/command/acquire")).token ?? null;
+  cmdToken = (await post(`${bridgeBase}/api/command/acquire`)).token ?? null;
 }
 export async function releaseCommand(): Promise<void> {
-  await post("/api/command/release"); cmdToken = null;
+  await post(`${bridgeBase}/api/command/release`); cmdToken = null;
 }
 
 // REST control — each call returns the verb's tri-state result {ok, guard, status, verb}.
 export async function postCmd(verb: string, body: Record<string, unknown> = {}): Promise<CmdResult> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (cmdToken) headers["x-command-token"] = cmdToken;
-  const r = await fetch(`/api/cmd/${verb}`, { method: "POST", headers, body: JSON.stringify(body) });
+  const r = await fetch(`${bridgeBase}/api/cmd/${verb}`, { method: "POST", headers, body: JSON.stringify(body) });
   return (await r.json()) as CmdResult;
 }
 
 export async function killSession(): Promise<void> {
-  await fetch("/api/session/kill", { method: "POST" });
+  await fetch(`${bridgeBase}/api/session/kill`, { method: "POST" });
 }
 
 // Generic JSON POST/GET for the offline plane (compile/validate/preflight/formations…).

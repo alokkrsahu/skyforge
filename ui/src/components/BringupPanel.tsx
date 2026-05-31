@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { post, get } from "../api";
+import { post, get, setBridgeBase } from "../api";
+import { connectWs } from "../store";
 
 // Compose the bring-up environment + spawn/track the stack via the gateway supervisor.
 const ARENAS = ["default", "walls", "windy", "frictionless", "forest", "baylands", "lawn", "aruco"];
@@ -24,8 +25,15 @@ export default function BringupPanel() {
   ].filter(Boolean).join(" ");
   const cmds = `./t1_sitl.sh ${n} ${arena}\n${env} ./t6_commander.sh ${n}`;
 
-  const spawn = async (target: string) =>
-    post("/api/bringup", { target, n, arena, opts: { ...opts, web: target === "commander" } }).then(refresh);
+  const spawn = async (target: string) => {
+    const r = await post("/api/bringup", { target, n, arena, opts: { ...opts, web: target === "commander" } });
+    if (target === "commander" && r.port) {
+      // the live bridge is on its own port — point control + telemetry there
+      setBridgeBase(`http://${location.hostname}:${r.port}`);
+      connectWs();
+    }
+    refresh();
+  };
 
   return (
     <div className="panel bringup">
